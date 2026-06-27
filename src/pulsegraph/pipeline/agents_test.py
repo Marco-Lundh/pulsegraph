@@ -6,9 +6,9 @@ from pulsegraph.domain.enums import EvalStatus, ModelKind, SourceKind
 from pulsegraph.pipeline.agents import (
     PipelineDeps,
     _analyze_one,
-    _draft,
     _evaluate,
     analyzer_node,
+    build_notification_draft,
     embedder_node,
     evaluator_node,
     fetcher_node,
@@ -218,14 +218,14 @@ def _approved(item: FetchedItem) -> EvaluationRecord:
 
 def test_draft_uses_external_id_and_first_line() -> None:
     item = FetchedItem(SourceKind.JOBTECH, "42", "c", {})
-    draft = _draft("u1", _approved(item))
+    draft = build_notification_draft("u1", _approved(item))
     assert draft.dedup_key == "jobtech:42"
     assert draft.title == "Title"
 
 
 def test_draft_falls_back_to_hash_when_no_external_id() -> None:
     item = FetchedItem(SourceKind.JOBTECH, None, "c", {})
-    draft = _draft("u1", _approved(item))
+    draft = build_notification_draft("u1", _approved(item))
     assert draft.dedup_key == "jobtech:h"
 
 

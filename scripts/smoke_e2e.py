@@ -9,7 +9,7 @@ Redis keys (fetch cache, rate-limit counter) were written.
 It uses fixture records for the source so it needs no network or Ollama,
 while still exercising the real DB and Redis integration end to end.
 
-    docker compose up -d        # or let this script do it
+    docker compose up -d        # or docker-compose; or let this run it
     uv run python scripts/smoke_e2e.py
 """
 
@@ -46,6 +46,24 @@ def _run(cmd: list[str]) -> None:
     subprocess.run(cmd, check=True)
 
 
+def _compose_cmd() -> list[str]:
+    """Return the available Docker Compose command.
+
+    Prefers the ``docker compose`` plugin and falls back to the
+    standalone ``docker-compose`` binary, so the smoke test runs on a
+    host with either one installed.
+    """
+    for cmd in (["docker", "compose"], ["docker-compose"]):
+        try:
+            subprocess.run([*cmd, "version"], check=True, capture_output=True)
+            return cmd
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            continue
+    raise RuntimeError(
+        "neither 'docker compose' nor 'docker-compose' is available"
+    )
+
+
 def _seed_watch(db: Session) -> Watch:
     now = datetime.datetime.now(datetime.UTC)
     user = User(
@@ -75,7 +93,7 @@ def run_smoke(*, manage_compose: bool = True) -> None:
     settings = get_settings()
 
     if manage_compose:
-        _run(["docker", "compose", "up", "-d", "--wait"])
+        _run([*_compose_cmd(), "up", "-d", "--wait"])
     _run(["uv", "run", "alembic", "upgrade", "head"])
 
     engine = create_engine(settings.database_url)

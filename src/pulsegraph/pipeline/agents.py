@@ -225,8 +225,15 @@ def evaluator_node(deps: PipelineDeps) -> Node:
     return _run
 
 
-def _draft(watch_user: str, record: EvaluationRecord) -> NotificationDraft:
-    """Build a deduplicated notification from an approved analysis."""
+def build_notification_draft(
+    watch_user: str, record: EvaluationRecord
+) -> NotificationDraft:
+    """Build a deduplicated notification from an approved analysis.
+
+    The single source of truth for the dedup identity, reused by the
+    persistence layer so the dashboard channel shares the same key as
+    email and webhook (ADR 0016).
+    """
     item = record.analysis.item
     result = record.analysis.result
     key = item.external_id or record.analysis.content_hash
@@ -250,7 +257,7 @@ def notifier_node(deps: PipelineDeps) -> Node:
         for record in state.get("evaluations", []):
             if record.status is not EvalStatus.APPROVED:
                 continue
-            draft = _draft(watch.user_id, record)
+            draft = build_notification_draft(watch.user_id, record)
             if draft.dedup_key in sent:
                 continue
             sent.add(draft.dedup_key)

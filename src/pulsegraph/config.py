@@ -72,6 +72,23 @@ class Settings(BaseSettings):
     langsmith_enabled: bool = Field(default=False, alias="LANGSMITH_ENABLED")
     langsmith_api_key: str = Field(default="", alias="LANGSMITH_API_KEY")
 
+    # Notification delivery channels (ADR 0016). Both are off by default
+    # so the local-first system never reaches outside the machine.
+    email_enabled: bool = Field(default=False, alias="EMAIL_ENABLED")
+    email_from: str = Field(
+        default="alerts@pulsegraph.local", alias="EMAIL_FROM"
+    )
+    smtp_host: str = Field(default="localhost", alias="SMTP_HOST")
+    smtp_port: int = Field(default=587, alias="SMTP_PORT")
+    smtp_username: str = Field(default="", alias="SMTP_USERNAME")
+    smtp_password: str = Field(default="", alias="SMTP_PASSWORD")
+    smtp_use_tls: bool = Field(default=True, alias="SMTP_USE_TLS")
+
+    webhook_enabled: bool = Field(default=False, alias="WEBHOOK_ENABLED")
+    webhook_signing_secret: str = Field(
+        default="", alias="WEBHOOK_SIGNING_SECRET"
+    )
+
     use_recorded_fixtures: bool = Field(
         default=False, alias="USE_RECORDED_FIXTURES"
     )
@@ -88,6 +105,11 @@ class Settings(BaseSettings):
     fetch_cache_ttl_seconds: int = Field(
         default=900, alias="FETCH_CACHE_TTL_SECONDS"
     )
+    # How far back to load a user's seen hashes / sent keys when seeding a
+    # run's dedup memory (ADR 0003/0016). Bounds the per-run lookup; items
+    # older than this may be re-analyzed, but the DB unique constraints
+    # still prevent duplicate rows.
+    dedup_lookback_days: int = Field(default=90, alias="DEDUP_LOOKBACK_DAYS")
 
     @property
     def cloud_model_available(self) -> bool:

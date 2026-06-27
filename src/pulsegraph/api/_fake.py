@@ -3,6 +3,7 @@
 import datetime
 import uuid
 from collections.abc import Generator
+from contextlib import nullcontext
 from typing import Any
 
 _DATETIME_ATTRS = (
@@ -85,6 +86,14 @@ class FakeSession:
 
     def commit(self) -> None:
         pass
+
+    def rollback(self) -> None:
+        pass
+
+    def begin_nested(self) -> Any:
+        # No savepoints in the in-memory double; constraints aren't
+        # enforced, so a no-op context manager is enough.
+        return nullcontext()
 
     def refresh(self, _obj: Any) -> None:
         pass
