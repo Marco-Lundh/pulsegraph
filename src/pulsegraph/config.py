@@ -37,11 +37,31 @@ class Settings(BaseSettings):
         default="http://localhost:11434", alias="OLLAMA_BASE_URL"
     )
     ollama_model: str = Field(default="llama3.1:8b", alias="OLLAMA_MODEL")
+    ollama_embedding_model: str = Field(
+        default="nomic-embed-text", alias="OLLAMA_EMBEDDING_MODEL"
+    )
+    ollama_timeout_seconds: float = Field(
+        default=60.0, alias="OLLAMA_TIMEOUT_SECONDS"
+    )
 
     use_cloud_model: bool = Field(default=False, alias="USE_CLOUD_MODEL")
     anthropic_api_key: str = Field(default="", alias="ANTHROPIC_API_KEY")
     anthropic_model: str = Field(
         default="claude-opus-4-8", alias="ANTHROPIC_MODEL"
+    )
+
+    # Claude pricing in USD per input/output token (claude-opus-4-8:
+    # $5 / $25 per million). Used to meter spend against the cost cap.
+    anthropic_input_cost_per_token: float = Field(
+        default=5.0 / 1_000_000, alias="ANTHROPIC_INPUT_COST_PER_TOKEN"
+    )
+    anthropic_output_cost_per_token: float = Field(
+        default=25.0 / 1_000_000, alias="ANTHROPIC_OUTPUT_COST_PER_TOKEN"
+    )
+
+    entsoe_api_token: str = Field(default="", alias="ENTSOE_API_TOKEN")
+    entsoe_base_url: str = Field(
+        default="https://web-api.tp.entsoe.eu/api", alias="ENTSOE_BASE_URL"
     )
 
     jwt_secret_key: str = Field(

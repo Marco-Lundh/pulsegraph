@@ -17,6 +17,14 @@ class UnknownSourceError(LookupError):
     """Raised when no plugin is registered for a source kind."""
 
 
+class CostCapExceededError(RuntimeError):
+    """Raised when a cloud model call would exceed the monthly cost cap.
+
+    The Analyzer treats this like an unavailable cloud model (ADR 0008):
+    it falls back to the local result instead of failing the run.
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class WatchSpec:
     """What a single pipeline run is asked to watch."""
