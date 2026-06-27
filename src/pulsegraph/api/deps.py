@@ -40,7 +40,7 @@ def get_current_user(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token",
-        )
+        ) from None
     user = db.get(User, user_id)
     if user is None:
         raise HTTPException(

@@ -92,7 +92,7 @@ def test_login_unknown_email_returns_401() -> None:
 
 
 def test_missing_token_returns_403() -> None:
-    # A fresh app with no dependency overrides — the bearer dep rejects the request.
+    # A fresh app with no dependency overrides; the bearer dep rejects it.
     plain_client = TestClient(create_app(), raise_server_exceptions=False)
     resp = plain_client.get("/watches")
     assert resp.status_code in (401, 403)
