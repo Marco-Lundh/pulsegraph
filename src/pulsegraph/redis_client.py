@@ -1,0 +1,62 @@
+"""Redis helpers: rate limiting, fetch caching, cost tracking (ADR 0022)."""
+
+import datetime
+import json
+import uuid
+
+import redis as redis_lib
+
+
+def make_redis(url: str) -> redis_lib.Redis:
+    return redis_lib.Redis.from_url(url, decode_responses=True)
+
+
+def check_rate(r: redis_lib.Redis, user_id: uuid.UUID, limit: int) -> bool:
+    """Return True if the user is within quota, False otherwise.
+
+    Atomically increments the hourly counter. The window key carries a
+    TTL so old counters expire automatically — no cleanup job needed.
+    """
+    now = datetime.datetime.now(datetime.UTC)
+    window_epoch = int(
+        now.replace(minute=0, second=0, microsecond=0).timestamp()
+    )
+    key = f"ratelimit:{user_id}:{window_epoch}"
+    count = r.incr(key)
+    if count == 1:
+        r.expire(key, 3600)
+    return count <= limit
+
+
+def get_fetch_cache(r: redis_lib.Redis, key: str) -> list | None:
+    """Return the cached fetch result for *key*, or None on a miss."""
+    raw = r.get(key)
+    if raw is None:
+        return None
+    return json.loads(raw)
+
+
+def set_fetch_cache(
+    r: redis_lib.Redis, key: str, data: list, ttl: int
+) -> None:
+    """Store *data* under *key* with a TTL in seconds."""
+    r.setex(key, ttl, json.dumps(data))
+
+
+def increment_cost(r: redis_lib.Redis, cost_usd: float) -> float:
+    """Add *cost_usd* to this month's Claude API cost counter.
+
+    Returns the new monthly total. Key rotates naturally each month.
+    """
+    return float(r.incrbyfloat(_cost_key(), cost_usd))
+
+
+def get_monthly_cost(r: redis_lib.Redis) -> float:
+    """Return the current month's accumulated Claude API cost in USD."""
+    val = r.get(_cost_key())
+    return float(val) if val is not None else 0.0
+
+
+def _cost_key() -> str:
+    month = datetime.datetime.now(datetime.UTC).strftime("%Y-%m")
+    return f"cost:claude:{month}"
