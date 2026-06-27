@@ -18,6 +18,7 @@ from pulsegraph.pipeline.agents import (
 from pulsegraph.pipeline.contracts import (
     AnalysisRecord,
     AnalysisResult,
+    CostCapExceededError,
     EvaluationRecord,
     NotificationDraft,
     UnknownSourceError,
@@ -141,6 +142,44 @@ def test_analyze_one_reraises_timeout_without_fallback() -> None:
 
     with pytest.raises(TimeoutError):
         _analyze_one(_deps(cloud=False, model=TimingOutClient()), "hi")
+
+
+class _CostCappedClient:
+    """Local analyses succeed; every cloud call hits the cost cap."""
+
+    def analyze(self, content: str, model: ModelKind) -> AnalysisResult:
+        if model is ModelKind.CLAUDE:
+            raise CostCapExceededError("cap reached")
+        return AnalysisResult("local", 0.4, 0.4, ModelKind.OLLAMA)
+
+
+def test_analyze_one_cost_cap_falls_back_to_local_on_fallback() -> None:
+    # Low local confidence wants the cloud, but the cap keeps the local
+    # result instead of failing the item (ADR 0008).
+    result = _analyze_one(_deps(cloud=True, model=_CostCappedClient()), "hi")
+    assert result.model is ModelKind.OLLAMA
+    assert result.summary == "local"
+
+
+def test_analyze_one_cost_cap_falls_back_on_direct_cloud() -> None:
+    # Complex content routes straight to the cloud; the cap reroutes it
+    # to the local model.
+    result = _analyze_one(
+        _deps(cloud=True, model=_CostCappedClient()), "x" * 1600
+    )
+    assert result.model is ModelKind.OLLAMA
+
+
+def test_analyze_one_cost_cap_with_local_timeout_reraises() -> None:
+    class TimeoutThenCapped:
+        def analyze(self, content: str, model: ModelKind) -> AnalysisResult:
+            if model is ModelKind.CLAUDE:
+                raise CostCapExceededError("cap reached")
+            raise TimeoutError("slow")
+
+    deps = _deps(cloud=True, model=TimeoutThenCapped())
+    with pytest.raises(TimeoutError):
+        _analyze_one(deps, "hi")
 
 
 def test_analyzer_node_builds_records() -> None:

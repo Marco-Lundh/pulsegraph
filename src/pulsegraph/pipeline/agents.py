@@ -16,6 +16,7 @@ from pulsegraph.domain.enums import EvalStatus, ModelKind
 from pulsegraph.pipeline.contracts import (
     AnalysisRecord,
     AnalysisResult,
+    CostCapExceededError,
     Embedder,
     EvaluationRecord,
     ModelClient,
@@ -136,25 +137,44 @@ def embedder_node(deps: PipelineDeps) -> Node:
 
 
 def _analyze_one(deps: PipelineDeps, content: str) -> AnalysisResult:
-    """Route one item, falling back to the cloud model if needed."""
+    """Route one item, falling back to the cloud model if needed.
+
+    Cloud calls may be paused by the monthly cost cap (ADR 0008); when
+    that happens we degrade to the local model instead of failing.
+    """
     complexity = classify_complexity(content)
     model = choose_model(complexity, deps.cloud_available)
 
+    if model is ModelKind.CLAUDE:
+        # Complex item routed straight to the cloud; on a cost cap, fall
+        # back to the local model rather than dropping the item.
+        try:
+            return deps.model.analyze(content, ModelKind.CLAUDE)
+        except CostCapExceededError:
+            return deps.model.analyze(content, ModelKind.OLLAMA)
+
     timed_out = False
     try:
-        result = deps.model.analyze(content, model)
+        result = deps.model.analyze(content, ModelKind.OLLAMA)
     except TimeoutError:
         result = None
         timed_out = True
 
     confidence = result.confidence if result else 0.0
-    if model is ModelKind.OLLAMA and should_fallback(
+    if should_fallback(
         confidence,
         timed_out,
         deps.cloud_available,
         deps.confidence_threshold,
     ):
-        return deps.model.analyze(content, ModelKind.CLAUDE)
+        try:
+            return deps.model.analyze(content, ModelKind.CLAUDE)
+        except CostCapExceededError:
+            if result is not None:
+                return result
+            raise TimeoutError(
+                "local analysis timed out and cloud cost cap reached"
+            ) from None
 
     if result is None:
         # Local timed out with no cloud fallback available.

@@ -1,37 +1,59 @@
 """arq WorkerSettings — wires up Redis, DB session factory, pipeline deps."""
 
+import anthropic
 from arq.connections import RedisSettings
 from arq.cron import cron
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from pulsegraph.config import get_settings
-from pulsegraph.domain.enums import SourceKind
 from pulsegraph.pipeline.agents import PipelineDeps
-from pulsegraph.pipeline.local import (
-    DictSourceRegistry,
-    HashingEmbedder,
-    InMemorySink,
-    KeywordModelClient,
-    StaticSourcePlugin,
-)
+from pulsegraph.pipeline.anthropic_client import ClaudeModelClient
+from pulsegraph.pipeline.hybrid import HybridModelClient
+from pulsegraph.pipeline.local import DictSourceRegistry, InMemorySink
+from pulsegraph.pipeline.ollama import OllamaEmbedder, OllamaModelClient
 from pulsegraph.redis_client import make_redis
+from pulsegraph.sources.entsoe import EntsoePlugin
+from pulsegraph.sources.jobtech import JobTechPlugin
+from pulsegraph.sources.riksdagen import RiksdagenPlugin
 from pulsegraph.worker.scheduler import enqueue_due_watches
 from pulsegraph.worker.tasks import run_watch
 
 
 def _build_pipeline_deps(settings) -> PipelineDeps:
-    """Wire pipeline adapters; replace stubs with real clients later."""
+    """Wire the pipeline to real local/cloud adapters (ADR 0002)."""
     registry = DictSourceRegistry()
-    # Real source plugins will be registered here; stubs used for now.
-    registry.register(StaticSourcePlugin(SourceKind.JOBTECH, []))
-    registry.register(StaticSourcePlugin(SourceKind.RIKSDAGEN, []))
-    registry.register(StaticSourcePlugin(SourceKind.ENTSOE, []))
+    registry.register(JobTechPlugin())
+    registry.register(RiksdagenPlugin())
+    registry.register(EntsoePlugin(settings.entsoe_api_token))
+
     r = make_redis(settings.redis_url)
+
+    local = OllamaModelClient(
+        settings.ollama_base_url,
+        settings.ollama_model,
+        timeout=settings.ollama_timeout_seconds,
+    )
+    cloud = None
+    if settings.cloud_model_available:
+        cloud = ClaudeModelClient(
+            anthropic.Anthropic(api_key=settings.anthropic_api_key),
+            settings.anthropic_model,
+            redis_client=r,
+            cost_cap_usd=settings.monthly_cost_cap_usd,
+            input_cost_per_token=settings.anthropic_input_cost_per_token,
+            output_cost_per_token=settings.anthropic_output_cost_per_token,
+        )
+
+    embedder = OllamaEmbedder(
+        settings.ollama_base_url,
+        settings.ollama_embedding_model,
+        timeout=settings.ollama_timeout_seconds,
+    )
     return PipelineDeps(
         registry=registry,
-        embedder=HashingEmbedder(),
-        model=KeywordModelClient(),
+        embedder=embedder,
+        model=HybridModelClient(local, cloud),
         sink=InMemorySink(),
         cloud_available=settings.cloud_model_available,
         redis_client=r,
