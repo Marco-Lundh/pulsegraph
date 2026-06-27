@@ -1,4 +1,4 @@
-"""Watch scheduling: select due watches and enqueue pipeline jobs (ADR 0015)."""
+"""Select due watches and enqueue their pipeline jobs (ADR 0015)."""
 
 import datetime
 

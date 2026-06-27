@@ -6,6 +6,14 @@ from collections.abc import Generator
 from contextlib import nullcontext
 from typing import Any
 
+from fastapi.testclient import TestClient
+
+from pulsegraph.api.app import create_app
+from pulsegraph.api.auth import create_token
+from pulsegraph.api.deps import get_current_user, get_db
+from pulsegraph.db.models import User
+from pulsegraph.domain.enums import UserRole
+
 _DATETIME_ATTRS = (
     "created_at",
     "updated_at",
@@ -14,14 +22,6 @@ _DATETIME_ATTRS = (
     "next_run_at",
     "decided_at",
 )
-
-from fastapi.testclient import TestClient
-
-from pulsegraph.api.app import create_app
-from pulsegraph.api.auth import create_token
-from pulsegraph.api.deps import get_current_user, get_db
-from pulsegraph.db.models import User
-from pulsegraph.domain.enums import UserRole
 
 # ---------------------------------------------------------------------------
 # FakeSession

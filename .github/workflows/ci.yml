@@ -1,0 +1,90 @@
+# CI pipeline (ADR 0017): lint -> tests -> e2e against the real stack.
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-and-test:
+    name: Lint, test, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Ruff format check
+        run: uv run --extra dev ruff format --check .
+
+      - name: Ruff lint
+        run: uv run --extra dev ruff check .
+
+      - name: Unit tests
+        run: uv run --extra dev pytest
+
+      - name: Build distribution
+        run: uv build
+
+  e2e:
+    name: E2E smoke (real stack)
+    runs-on: ubuntu-latest
+    needs: lint-and-test
+    services:
+      db:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: pulsegraph
+          POSTGRES_PASSWORD: pulsegraph
+          POSTGRES_DB: pulsegraph
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pulsegraph"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg://pulsegraph:pulsegraph@localhost:5432/pulsegraph
+      REDIS_URL: redis://localhost:6379/0
+      PULSEGRAPH_E2E: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      # The services are already up, so the smoke test only applies
+      # migrations and runs one watch end to end (manage_compose=False).
+      - name: E2E smoke
+        run: >-
+          uv run --extra dev python -c
+          "from scripts.smoke_e2e import run_smoke;
+          run_smoke(manage_compose=False)"
