@@ -3,17 +3,23 @@
 import asyncio
 import datetime
 import uuid
+from dataclasses import replace
 
 import redis as redis_lib
 from sqlalchemy.orm import Session
 
 from pulsegraph.config import get_settings
 from pulsegraph.db.models import PipelineRun, Watch
-from pulsegraph.domain.enums import RunStatus
+from pulsegraph.domain.enums import ModelKind, RunStatus
 from pulsegraph.pipeline.agents import PipelineDeps
 from pulsegraph.pipeline.contracts import WatchSpec
 from pulsegraph.pipeline.graph import run_pipeline
 from pulsegraph.redis_client import check_rate
+from pulsegraph.worker.persistence import (
+    load_dedup_memory,
+    persist_run_results,
+)
+from pulsegraph.worker.sinks import build_notification_sink
 
 # ---------------------------------------------------------------------------
 # Core pipeline runner (testable without arq)
@@ -55,6 +61,9 @@ def run_watch_core(
     )
     db.add(run)
     db.flush()
+    # Commit the RUNNING record on its own so that rolling back a failed
+    # run's partial provenance still leaves the run row to mark FAILED.
+    db.commit()
 
     spec = WatchSpec(
         user_id=str(watch.user_id),
@@ -62,11 +71,38 @@ def run_watch_core(
         query=watch.prompt,
     )
 
+    settings = get_settings()
+    # Seed cross-run memory from the DB so the Fetcher skips already-stored
+    # items and the Notifier never re-delivers (ADR 0003/0016).
+    seen_hashes, sent_dedup_keys = load_dedup_memory(
+        db, watch.user_id, lookback_days=settings.dedup_lookback_days
+    )
+    # Bind the notification channels to this run's session (ADR 0016).
+    run_deps = replace(deps, sink=build_notification_sink(settings, db))
+
     try:
-        state = run_pipeline(deps, spec)
-        run.status = RunStatus.SUCCEEDED
+        state = run_pipeline(
+            run_deps,
+            spec,
+            seen_hashes=seen_hashes,
+            sent_dedup_keys=sent_dedup_keys,
+        )
         item_count = len(state.get("items") or [])
+        persist_run_results(
+            db,
+            run,
+            watch,
+            state,
+            embedding_model=run_deps.embedder.model_name,
+            model_versions={
+                ModelKind.CLAUDE: settings.anthropic_model,
+                ModelKind.OLLAMA: settings.ollama_model,
+            },
+        )
+        run.status = RunStatus.SUCCEEDED
     except Exception as exc:
+        # Discard any half-written provenance; keep a FAILED run record.
+        db.rollback()
         run.status = RunStatus.FAILED
         run.error = str(exc)
         item_count = 0

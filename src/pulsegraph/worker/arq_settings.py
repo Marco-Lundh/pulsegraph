@@ -21,7 +21,11 @@ from pulsegraph.worker.tasks import run_watch
 
 
 def _build_pipeline_deps(settings) -> PipelineDeps:
-    """Wire the pipeline to real local/cloud adapters (ADR 0002)."""
+    """Wire the pipeline to real local/cloud adapters (ADR 0002).
+
+    The notification sink is a placeholder here; ``worker.tasks`` swaps in
+    a per-run sink bound to the run's DB session (ADR 0016).
+    """
     registry = DictSourceRegistry()
     registry.register(JobTechPlugin())
     registry.register(RiksdagenPlugin())
