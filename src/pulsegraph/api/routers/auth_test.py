@@ -4,11 +4,11 @@ import uuid
 
 from fastapi.testclient import TestClient
 
-from pulsegraph.api._fake import FakeSession
+from pulsegraph.api._fake import FakeSession, make_client
 from pulsegraph.api.app import create_app
 from pulsegraph.api.auth import hash_password
 from pulsegraph.api.deps import get_db
-from pulsegraph.db.models import User
+from pulsegraph.db.models import AuditLogEntry, User
 from pulsegraph.domain.enums import UserRole
 
 
@@ -86,6 +86,24 @@ def test_login_unknown_email_returns_401() -> None:
         json={"email": "ghost@example.com", "password": "x"},
     )
     assert resp.status_code == 401
+
+
+# --- delete account (GDPR erasure) ---
+
+
+def test_delete_account_erases_user_and_audits() -> None:
+    user = _existing_user()
+    db = FakeSession(user)
+    client, _, _ = make_client(db=db, user=user)
+
+    resp = client.delete("/auth/me")
+
+    assert resp.status_code == 204
+    assert db.query(User).all() == []
+    audits = db.query(AuditLogEntry).all()
+    assert audits[-1].action == "user.delete"
+    assert audits[-1].entity_id == user.id
+    assert audits[-1].meta["email"] == user.email
 
 
 # --- token decode ---

@@ -96,3 +96,33 @@ def decide(
     db.commit()
     db.refresh(decision)
     return {"id": str(decision.id), "decision": decision.decision}
+
+
+@router.delete(
+    "/users/{user_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_user(
+    user_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+) -> None:
+    """Erase a user and all their data (GDPR right to erasure, ADR 0018).
+
+    All user-owned rows cascade via ON DELETE CASCADE. The audit entry
+    records the admin actor plus the erased user's id and email.
+    """
+    target = db.get(User, user_id)
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    db.add(
+        AuditLogEntry(
+            actor_user_id=admin.id,
+            action="user.delete",
+            entity_type="user",
+            entity_id=user_id,
+            meta={"email": target.email, "by": "admin"},
+        )
+    )
+    db.delete(target)
+    db.commit()

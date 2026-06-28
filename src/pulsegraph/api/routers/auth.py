@@ -8,7 +8,7 @@ from pulsegraph.api.auth import (
     hash_password,
     verify_password,
 )
-from pulsegraph.api.deps import get_db
+from pulsegraph.api.deps import get_current_user, get_db
 from pulsegraph.api.schemas import (
     LoginRequest,
     RegisterRequest,
@@ -22,7 +22,11 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 def _audit(
-    db: Session, action: str, actor_id: object = None, entity_id: object = None
+    db: Session,
+    action: str,
+    actor_id: object = None,
+    entity_id: object = None,
+    meta: dict | None = None,
 ) -> None:
     db.add(
         AuditLogEntry(
@@ -30,7 +34,7 @@ def _audit(
             action=action,
             entity_type="user",
             entity_id=entity_id,
-            meta={},
+            meta=meta or {},
         )
     )
 
@@ -71,3 +75,26 @@ def login(body: LoginRequest, db: Session = Depends(get_db)) -> dict:
     _audit(db, "user.login", actor_id=user.id, entity_id=user.id)
     db.commit()
     return {"access_token": create_token(user.id), "token_type": "bearer"}
+
+
+@router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
+def delete_account(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> None:
+    """Erase the caller's account and all their data (GDPR, ADR 0018).
+
+    Every user-owned row cascades via ON DELETE CASCADE. The audit entry
+    keeps the user id (``entity_id``) and email so the erasure stays
+    provable after the row is gone — ``actor_user_id`` is set null when
+    the user is deleted.
+    """
+    _audit(
+        db,
+        "user.delete",
+        actor_id=user.id,
+        entity_id=user.id,
+        meta={"email": user.email},
+    )
+    db.delete(user)
+    db.commit()
