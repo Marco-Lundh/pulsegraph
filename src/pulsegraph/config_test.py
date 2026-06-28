@@ -19,6 +19,7 @@ def test_defaults_are_local_first() -> None:
     assert settings.use_cloud_model is False
     assert settings.langsmith_enabled is False
     assert settings.data_retention_days == 90
+    assert settings.eval_min_f1 == 0.7
 
 
 # --- cloud_model_available ---

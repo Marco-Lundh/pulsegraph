@@ -123,6 +123,9 @@ class Settings(BaseSettings):
     # older than this may be re-analyzed, but the DB unique constraints
     # still prevent duplicate rows.
     dedup_lookback_days: int = Field(default=90, alias="DEDUP_LOOKBACK_DAYS")
+    # Offline eval release gate (ADR 0012/0019): the minimum notify-F1 a
+    # release must score on the golden datasets before it can ship.
+    eval_min_f1: float = Field(default=0.7, alias="EVAL_MIN_F1")
     # GDPR data retention (ADR 0018): fetched items and their provenance
     # chain, plus pipeline-run traces, are purged once older than this
     # window. A scheduled job enforces it (see worker.retention).
