@@ -138,6 +138,29 @@ def test_persists_full_chain_for_approved_item() -> None:
     assert notif.dedup_key == "jobtech:42"
 
 
+def test_digest_mode_writes_pending_notification() -> None:
+    watch = _watch()
+    run = _run(watch)
+    db = FakeSession(watch, run)
+    ev = _evaluation(EvalStatus.APPROVED)
+
+    count = persist_run_results(
+        db,
+        run,
+        watch,
+        _state([ev]),
+        embedding_model="hashing-768-v1",
+        model_versions=_MODEL_VERSIONS,
+        now=_NOW,
+        digest=True,
+    )
+
+    assert count == 1
+    notif = db.query(Notification).all()[0]
+    assert notif.status == NotificationStatus.PENDING
+    assert notif.delivered_at is None
+
+
 def test_persists_provenance_but_no_notification_for_review() -> None:
     watch = _watch()
     run = _run(watch)

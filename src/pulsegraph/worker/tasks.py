@@ -16,6 +16,7 @@ from pulsegraph.pipeline.agents import PipelineDeps
 from pulsegraph.pipeline.contracts import WatchSpec
 from pulsegraph.pipeline.graph import run_pipeline
 from pulsegraph.redis_client import check_rate
+from pulsegraph.worker.digest import user_wants_digest
 from pulsegraph.worker.persistence import (
     load_dedup_memory,
     persist_run_results,
@@ -103,6 +104,7 @@ def run_watch_core(
                 ModelKind.CLAUDE: settings.anthropic_model,
                 ModelKind.OLLAMA: settings.ollama_model,
             },
+            digest=user_wants_digest(db, watch.user_id),
         )
         run.status = RunStatus.SUCCEEDED
     except Exception as exc:

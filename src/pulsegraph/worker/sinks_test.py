@@ -5,12 +5,19 @@ import uuid
 
 from pulsegraph.api._fake import FakeSession
 from pulsegraph.db.models import NotificationSetting, User
-from pulsegraph.domain.enums import NotificationChannel, UserRole
+from pulsegraph.domain.enums import (
+    NotificationChannel,
+    NotificationFrequency,
+    UserRole,
+)
 from pulsegraph.pipeline.delivery import MultiSink
 from pulsegraph.worker.sinks import (
     _destination_resolver,
     build_notification_sink,
 )
+
+_INSTANT = NotificationFrequency.INSTANT
+_DIGEST = NotificationFrequency.DAILY_DIGEST
 
 
 def _settings(**overrides) -> types.SimpleNamespace:
@@ -38,11 +45,12 @@ def test_resolver_returns_explicit_destination() -> None:
         user_id=uid,
         channel=NotificationChannel.WEBHOOK,
         destination="https://hook.example/x",
+        frequency=_INSTANT,
         is_active=True,
     )
     db = FakeSession(setting)
 
-    resolve = _destination_resolver(db, NotificationChannel.WEBHOOK)
+    resolve = _destination_resolver(db, NotificationChannel.WEBHOOK, _INSTANT)
 
     assert resolve(str(uid)) == "https://hook.example/x"
 
@@ -53,6 +61,7 @@ def test_resolver_falls_back_to_account_email() -> None:
         user_id=uid,
         channel=NotificationChannel.EMAIL,
         destination=None,
+        frequency=_INSTANT,
         is_active=True,
     )
     user = User(
@@ -63,7 +72,7 @@ def test_resolver_falls_back_to_account_email() -> None:
     )
     db = FakeSession(setting, user)
 
-    resolve = _destination_resolver(db, NotificationChannel.EMAIL)
+    resolve = _destination_resolver(db, NotificationChannel.EMAIL, _INSTANT)
 
     assert resolve(str(uid)) == "user@example.com"
 
@@ -71,9 +80,28 @@ def test_resolver_falls_back_to_account_email() -> None:
 def test_resolver_returns_none_without_setting() -> None:
     db = FakeSession()
 
-    resolve = _destination_resolver(db, NotificationChannel.WEBHOOK)
+    resolve = _destination_resolver(db, NotificationChannel.WEBHOOK, _INSTANT)
 
     assert resolve(str(uuid.uuid4())) is None
+
+
+def test_resolver_skips_setting_of_other_frequency() -> None:
+    uid = uuid.uuid4()
+    setting = NotificationSetting(
+        user_id=uid,
+        channel=NotificationChannel.WEBHOOK,
+        destination="https://hook.example/x",
+        frequency=_DIGEST,
+        is_active=True,
+    )
+    db = FakeSession(setting)
+
+    # The instant resolver must not match a digest subscription.
+    instant = _destination_resolver(db, NotificationChannel.WEBHOOK, _INSTANT)
+    digest = _destination_resolver(db, NotificationChannel.WEBHOOK, _DIGEST)
+
+    assert instant(str(uid)) is None
+    assert digest(str(uid)) == "https://hook.example/x"
 
 
 # --- build_notification_sink -----------------------------------------------

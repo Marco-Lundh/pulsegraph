@@ -20,6 +20,7 @@ instead of failing.
 import datetime
 import uuid
 
+from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -55,7 +56,9 @@ def load_dedup_memory(
     two scalar columns are selected (never embedding vectors), and only
     rows from the last ``lookback_days`` are loaded to bound the lookup;
     older duplicates are caught by the unique constraints in
-    :func:`persist_run_results`.
+    :func:`persist_run_results`. Notifications still PENDING (queued for a
+    digest, ADR 0016) count as already-sent so a digest user's item is
+    not re-queued on every run before the digest goes out.
     """
     cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(
         days=lookback_days
@@ -71,7 +74,10 @@ def load_dedup_memory(
         for row in db.query(Notification.dedup_key)
         .filter(
             Notification.user_id == user_id,
-            Notification.delivered_at >= cutoff,
+            or_(
+                Notification.delivered_at >= cutoff,
+                Notification.status == NotificationStatus.PENDING,
+            ),
         )
         .all()
     }
@@ -87,12 +93,15 @@ def persist_run_results(
     embedding_model: str,
     model_versions: dict[ModelKind, str],
     now: datetime.datetime | None = None,
+    digest: bool = False,
 ) -> int:
     """Write the run's items, analyses, evaluations and notifications.
 
-    Returns the number of dashboard notifications written. Adds rows to
-    *db* without committing; the caller commits as part of the run's
-    transaction.
+    Returns the number of notifications written. Adds rows to *db*
+    without committing; the caller commits as part of the run's
+    transaction. When *digest* is true the notification is recorded
+    ``PENDING`` (queued for the daily digest job, ADR 0016) instead of
+    ``SENT``; instant delivery already happened in the Notifier node.
     """
     now = now or datetime.datetime.now(datetime.UTC)
     embeddings = state.get("embeddings", {})
@@ -114,6 +123,7 @@ def persist_run_results(
                     model_versions=model_versions,
                     new_keys=new_keys,
                     now=now,
+                    digest=digest,
                 )
         except IntegrityError:
             # Already stored by an earlier run; the savepoint rolled back.
@@ -135,6 +145,7 @@ def _persist_evaluation(
     model_versions: dict[ModelKind, str],
     new_keys: set[str],
     now: datetime.datetime,
+    digest: bool = False,
 ) -> bool:
     """Persist one evaluation's chain; return whether a notif was written."""
     analysis_record = evaluation.analysis
@@ -181,14 +192,15 @@ def _persist_evaluation(
     if draft.dedup_key not in new_keys:
         return False
     new_keys.discard(draft.dedup_key)
+    status = NotificationStatus.PENDING if digest else NotificationStatus.SENT
     db.add(
         Notification(
             user_id=watch.user_id,
             analysis_id=analysis.id,
             channel=NotificationChannel.DASHBOARD,
             dedup_key=draft.dedup_key,
-            status=NotificationStatus.SENT,
-            delivered_at=now,
+            status=status,
+            delivered_at=None if digest else now,
         )
     )
     # Flush so a duplicate (user_id, dedup_key) trips inside the savepoint.
