@@ -9,6 +9,7 @@ from pulsegraph.api.auth import (
     verify_password,
 )
 from pulsegraph.api.deps import get_current_user, get_db
+from pulsegraph.api.export import export_user_data
 from pulsegraph.api.schemas import (
     LoginRequest,
     RegisterRequest,
@@ -75,6 +76,21 @@ def login(body: LoginRequest, db: Session = Depends(get_db)) -> dict:
     _audit(db, "user.login", actor_id=user.id, entity_id=user.id)
     db.commit()
     return {"access_token": create_token(user.id), "token_type": "bearer"}
+
+
+@router.get("/me/export")
+def export_account(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict:
+    """Export all personal data for the caller (GDPR portability, ADR 0018).
+
+    Returns a JSON document of every record keyed to the user. The export
+    itself is recorded in the audit log.
+    """
+    _audit(db, "user.export", actor_id=user.id, entity_id=user.id)
+    db.commit()
+    return export_user_data(db, user)
 
 
 @router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
