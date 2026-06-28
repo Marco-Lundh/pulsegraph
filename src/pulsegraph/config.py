@@ -110,6 +110,10 @@ class Settings(BaseSettings):
     # older than this may be re-analyzed, but the DB unique constraints
     # still prevent duplicate rows.
     dedup_lookback_days: int = Field(default=90, alias="DEDUP_LOOKBACK_DAYS")
+    # GDPR data retention (ADR 0018): fetched items and their provenance
+    # chain, plus pipeline-run traces, are purged once older than this
+    # window. A scheduled job enforces it (see worker.retention).
+    data_retention_days: int = Field(default=90, alias="DATA_RETENTION_DAYS")
 
     @property
     def cloud_model_available(self) -> bool:

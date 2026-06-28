@@ -71,6 +71,11 @@ class FakeSession:
         self.added.append(obj)
         self._put(obj)
 
+    def delete(self, obj: Any) -> None:
+        bucket = self._store.get(type(obj))
+        if bucket and obj in bucket:
+            bucket.remove(obj)
+
     def _apply_defaults(self, obj: Any) -> None:
         now = datetime.datetime.now(datetime.UTC)
         for attr in _DATETIME_ATTRS:
