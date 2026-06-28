@@ -1,11 +1,13 @@
 """Tests for the six agent nodes and their helpers."""
 
+import fakeredis
 import pytest
 
 from pulsegraph.domain.enums import EvalStatus, ModelKind, SourceKind
 from pulsegraph.pipeline.agents import (
     PipelineDeps,
     _analyze_one,
+    _cache_key,
     _evaluate,
     analyzer_node,
     build_notification_draft,
@@ -31,6 +33,7 @@ from pulsegraph.pipeline.local import (
     KeywordModelClient,
     StaticSourcePlugin,
 )
+from pulsegraph.redis_client import get_fetch_cache
 from pulsegraph.sources.base import FetchedItem
 
 WATCH = WatchSpec(user_id="u1", source=SourceKind.JOBTECH, query="python")
@@ -103,6 +106,65 @@ def test_fetcher_skips_records_already_seen() -> None:
         {"watch": WATCH, "seen_hashes": first["seen_hashes"]}
     )
     assert second["items"] == []
+
+
+class _CountingPlugin(StaticSourcePlugin):
+    """A static plugin that records how many times ``fetch`` is hit."""
+
+    def __init__(self, records: list[dict]) -> None:
+        super().__init__(SourceKind.JOBTECH, records)
+        self.fetch_calls = 0
+
+    def fetch(self, query: str) -> list[dict]:
+        self.fetch_calls += 1
+        return super().fetch(query)
+
+
+def _deps_with(plugin, redis_client=None, ttl: int = 900) -> PipelineDeps:
+    registry = DictSourceRegistry()
+    registry.register(plugin)
+    return PipelineDeps(
+        registry=registry,
+        embedder=HashingEmbedder(),
+        model=KeywordModelClient(keywords=("python",)),
+        sink=InMemorySink(),
+        cloud_available=False,
+        redis_client=redis_client,
+        fetch_cache_ttl=ttl,
+    )
+
+
+def test_fetcher_caches_raw_records_on_miss() -> None:
+    r = fakeredis.FakeRedis(decode_responses=True)
+    plugin = _CountingPlugin(_records())
+    out = fetcher_node(_deps_with(plugin, r))(
+        {"watch": WATCH, "seen_hashes": set()}
+    )
+    assert plugin.fetch_calls == 1
+    # The raw records are now in the cache for the next run to reuse.
+    cached = get_fetch_cache(r, _cache_key(str(WATCH.source), WATCH.query))
+    assert cached == _records()
+    assert len(out["items"]) == 2
+
+
+def test_fetcher_serves_from_cache_on_hit() -> None:
+    r = fakeredis.FakeRedis(decode_responses=True)
+    plugin = _CountingPlugin(_records())
+    node = fetcher_node(_deps_with(plugin, r))
+    node({"watch": WATCH, "seen_hashes": set()})
+    second = node({"watch": WATCH, "seen_hashes": set()})
+    # Second run is served from cache: the source is not fetched again.
+    assert plugin.fetch_calls == 1
+    assert len(second["items"]) == 2
+
+
+def test_fetcher_without_redis_fetches_every_run() -> None:
+    plugin = _CountingPlugin(_records())
+    node = fetcher_node(_deps_with(plugin, redis_client=None))
+    node({"watch": WATCH, "seen_hashes": set()})
+    node({"watch": WATCH, "seen_hashes": set()})
+    # No Redis means no cache — each run hits the source.
+    assert plugin.fetch_calls == 2
 
 
 def test_embedder_keys_by_content_hash() -> None:
