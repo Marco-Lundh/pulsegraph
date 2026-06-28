@@ -35,6 +35,11 @@ jobs:
       - name: Unit tests
         run: uv run --extra dev pytest
 
+      # Release gate (ADR 0012): block the build if the golden datasets
+      # regress past the configured thresholds.
+      - name: Offline eval gate
+        run: uv run --extra dev python scripts/offline_eval.py
+
       - name: Build distribution
         run: uv build
 
