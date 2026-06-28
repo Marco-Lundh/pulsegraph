@@ -50,11 +50,18 @@ def test_non_admin_cannot_access_admin_routes() -> None:
     assert resp.status_code == 403
 
 
-def test_admin_ops_reports_spend_vs_cap(monkeypatch) -> None:
+def _patch_ops(monkeypatch, *, spend=8.5, depth=0, worker=True) -> None:
     from pulsegraph.api.routers import admin as admin_router
 
+    # Stub the Redis-backed probes so the endpoint needs no live Redis.
+    monkeypatch.setattr(admin_router, "get_monthly_cost", lambda _r: spend)
+    monkeypatch.setattr(admin_router, "queue_depth", lambda _r: depth)
+    monkeypatch.setattr(admin_router, "worker_alive", lambda _r: worker)
+
+
+def test_admin_ops_reports_spend_vs_cap(monkeypatch) -> None:
     # Default cap is 10.0 with a 0.8 alert ratio, so 8.5 is near the cap.
-    monkeypatch.setattr(admin_router, "get_monthly_cost", lambda _r: 8.5)
+    _patch_ops(monkeypatch, spend=8.5)
     admin = _make_user(UserRole.ADMIN)
     db = FakeSession(admin)
     client, _, _ = make_client(db=db, user=admin)
@@ -66,6 +73,35 @@ def test_admin_ops_reports_spend_vs_cap(monkeypatch) -> None:
     assert spend["spend_usd"] == 8.5
     assert spend["near_cap"] is True
     assert spend["over_cap"] is False
+
+
+def test_admin_ops_reports_queue_and_worker(monkeypatch) -> None:
+    _patch_ops(monkeypatch, depth=5, worker=True)
+    admin = _make_user(UserRole.ADMIN)
+    db = FakeSession(admin)
+    client, _, _ = make_client(db=db, user=admin)
+
+    queue = client.get("/admin/ops").json()["queue"]
+
+    assert queue["depth"] == 5
+    assert queue["worker_alive"] is True
+    assert queue["worker_down"] is False
+    assert queue["backlog"] is False
+
+
+def test_admin_ops_flags_paused_sources(monkeypatch) -> None:
+    _patch_ops(monkeypatch)
+    admin = _make_user(UserRole.ADMIN)
+    paused = SourceHealth(
+        source=SourceKind.JOBTECH, status=SourceStatus.PAUSED
+    )
+    db = FakeSession(admin, paused)
+    client, _, _ = make_client(db=db, user=admin)
+
+    sources = client.get("/admin/ops").json()["sources"]
+
+    assert sources["paused"] == ["jobtech"]
+    assert sources["alert"] is True
 
 
 def test_admin_can_access_source_health() -> None:

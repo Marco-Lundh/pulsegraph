@@ -11,7 +11,16 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 import httpx
+from arq.constants import default_queue_name, health_check_key_suffix
 from sqlalchemy import text
+
+from pulsegraph.db.models import SourceHealth
+from pulsegraph.domain.enums import SourceStatus
+
+# arq writes the queue as a sorted set and refreshes a health-check key
+# with a short TTL while the worker is alive (see arq.constants).
+_QUEUE_KEY = default_queue_name
+_HEALTH_KEY = f"{default_queue_name}{health_check_key_suffix}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +80,49 @@ def summarize(results: list[CheckResult]) -> dict:
         "status": "ok" if healthy else "degraded",
         "checks": {r.name: {"ok": r.ok, "detail": r.detail} for r in results},
     }
+
+
+def queue_depth(client: Any) -> int:
+    """Return the number of jobs currently in the arq queue."""
+    return int(client.zcard(_QUEUE_KEY))
+
+
+def worker_alive(client: Any) -> bool:
+    """Whether a worker has refreshed its health-check key recently.
+
+    arq keeps the key alive with a short TTL while running, so its
+    presence means a worker is up; its absence means none is (ADR 0020).
+    """
+    return bool(client.exists(_HEALTH_KEY))
+
+
+def queue_status(depth: int, worker_up: bool, backlog_threshold: int) -> dict:
+    """Operational view of the queue (ADR 0020).
+
+    ``worker_down`` and ``backlog`` are the operator alert signals: no
+    worker draining the queue, or a backlog past the threshold.
+    """
+    return {
+        "depth": depth,
+        "worker_alive": worker_up,
+        "worker_down": not worker_up,
+        "backlog": depth >= backlog_threshold,
+    }
+
+
+def paused_sources(db: Any) -> list[str]:
+    """Return the sources currently paused for drift (ADR 0010/0020).
+
+    Filtered in Python too, so it is correct under the FakeSession test
+    double whose ``filter`` is a no-op.
+    """
+    return [
+        row.source
+        for row in db.query(SourceHealth)
+        .filter(SourceHealth.status == SourceStatus.PAUSED)
+        .all()
+        if row.status == SourceStatus.PAUSED
+    ]
 
 
 def spend_status(spend_usd: float, cap_usd: float, alert_ratio: float) -> dict:

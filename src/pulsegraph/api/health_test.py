@@ -2,14 +2,21 @@
 
 import fakeredis
 
+from pulsegraph.api._fake import FakeSession
 from pulsegraph.api.health import (
     CheckResult,
     check_database,
     check_ollama,
     check_redis,
+    paused_sources,
+    queue_depth,
+    queue_status,
     spend_status,
     summarize,
+    worker_alive,
 )
+from pulsegraph.db.models import SourceHealth
+from pulsegraph.domain.enums import SourceKind, SourceStatus
 
 
 class _OkResponse:
@@ -92,6 +99,69 @@ def test_summarize_degraded_when_any_fails() -> None:
     )
     assert summary["status"] == "degraded"
     assert summary["checks"]["b"]["detail"] == "boom"
+
+
+# --- queue depth / worker liveness ---
+
+
+def test_queue_depth_counts_queued_jobs() -> None:
+    r = fakeredis.FakeRedis(decode_responses=True)
+    r.zadd("arq:queue", {"job1": 1.0, "job2": 2.0})
+    assert queue_depth(r) == 2
+
+
+def test_queue_depth_zero_when_empty() -> None:
+    r = fakeredis.FakeRedis(decode_responses=True)
+    assert queue_depth(r) == 0
+
+
+def test_worker_alive_true_when_health_key_present() -> None:
+    r = fakeredis.FakeRedis(decode_responses=True)
+    r.set("arq:queue:health-check", "ok")
+    assert worker_alive(r) is True
+
+
+def test_worker_alive_false_when_absent() -> None:
+    r = fakeredis.FakeRedis(decode_responses=True)
+    assert worker_alive(r) is False
+
+
+# --- queue_status ---
+
+
+def test_queue_status_healthy() -> None:
+    status = queue_status(depth=5, worker_up=True, backlog_threshold=100)
+    assert status == {
+        "depth": 5,
+        "worker_alive": True,
+        "worker_down": False,
+        "backlog": False,
+    }
+
+
+def test_queue_status_flags_backlog_and_down_worker() -> None:
+    status = queue_status(depth=150, worker_up=False, backlog_threshold=100)
+    assert status["backlog"] is True
+    assert status["worker_down"] is True
+
+
+# --- paused_sources ---
+
+
+def test_paused_sources_lists_only_paused() -> None:
+    paused = SourceHealth(
+        source=SourceKind.JOBTECH, status=SourceStatus.PAUSED
+    )
+    db = FakeSession(paused)
+    assert paused_sources(db) == [SourceKind.JOBTECH]
+
+
+def test_paused_sources_excludes_healthy() -> None:
+    healthy = SourceHealth(
+        source=SourceKind.RIKSDAGEN, status=SourceStatus.HEALTHY
+    )
+    db = FakeSession(healthy)
+    assert paused_sources(db) == []
 
 
 # --- spend_status ---
