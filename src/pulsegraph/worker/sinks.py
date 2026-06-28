@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from pulsegraph.config import Settings
 from pulsegraph.db.models import NotificationSetting, User
-from pulsegraph.domain.enums import NotificationChannel
+from pulsegraph.domain.enums import NotificationChannel, NotificationFrequency
 from pulsegraph.pipeline.contracts import NotificationSink
 from pulsegraph.pipeline.delivery import (
     EmailSink,
@@ -24,13 +24,18 @@ from pulsegraph.pipeline.delivery import (
 
 
 def _destination_resolver(
-    db: Session, channel: NotificationChannel
+    db: Session,
+    channel: NotificationChannel,
+    frequency: NotificationFrequency,
 ) -> Resolver:
-    """Resolve a user's destination for ``channel`` from their settings.
+    """Resolve a user's destination for ``channel`` at ``frequency``.
 
-    Returns ``None`` when the user has no active setting for the channel,
-    so the sink skips them. An email setting with no explicit destination
-    falls back to the user's account email (ADR 0016).
+    Returns ``None`` when the user has no active setting for the channel
+    at that frequency, so the sink skips them. This is what separates
+    instant from digest delivery: the instant sink only resolves
+    ``INSTANT`` settings, the digest sink only ``DAILY_DIGEST`` (ADR 0016).
+    An email setting with no explicit destination falls back to the
+    user's account email.
     """
 
     def resolve(user_id: str) -> str | None:
@@ -40,11 +45,12 @@ def _destination_resolver(
             .filter(
                 NotificationSetting.user_id == uid,
                 NotificationSetting.channel == channel,
+                NotificationSetting.frequency == frequency,
                 NotificationSetting.is_active.is_(True),
             )
             .first()
         )
-        if setting is None:
+        if setting is None or setting.frequency != frequency:
             return None
         if setting.destination:
             return setting.destination
@@ -57,9 +63,16 @@ def _destination_resolver(
 
 
 def build_notification_sink(
-    settings: Settings, db: Session
+    settings: Settings,
+    db: Session,
+    frequency: NotificationFrequency = NotificationFrequency.INSTANT,
 ) -> NotificationSink:
-    """Build a ``MultiSink`` of the channels enabled in *settings*."""
+    """Build a ``MultiSink`` of the channels enabled in *settings*.
+
+    Only users whose channel setting matches *frequency* are delivered to,
+    so the same builder produces the instant sink (used per run) and the
+    digest sink (used by the daily digest job).
+    """
     sinks: list[NotificationSink] = []
     if settings.email_enabled:
         sinks.append(
@@ -72,13 +85,17 @@ def build_notification_sink(
                     password=settings.smtp_password,
                     use_tls=settings.smtp_use_tls,
                 ),
-                resolve=_destination_resolver(db, NotificationChannel.EMAIL),
+                resolve=_destination_resolver(
+                    db, NotificationChannel.EMAIL, frequency
+                ),
             )
         )
     if settings.webhook_enabled:
         sinks.append(
             WebhookSink(
-                resolve=_destination_resolver(db, NotificationChannel.WEBHOOK),
+                resolve=_destination_resolver(
+                    db, NotificationChannel.WEBHOOK, frequency
+                ),
                 secret=settings.webhook_signing_secret,
             )
         )
