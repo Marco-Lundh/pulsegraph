@@ -110,6 +110,11 @@ class Settings(BaseSettings):
     cost_alert_threshold_ratio: float = Field(
         default=0.8, alias="COST_ALERT_THRESHOLD_RATIO"
     )
+    # Operator alert (ADR 0020): flag the queue as backlogged once this
+    # many jobs are waiting.
+    queue_backlog_alert_threshold: int = Field(
+        default=100, alias="QUEUE_BACKLOG_ALERT_THRESHOLD"
+    )
     fetch_cache_ttl_seconds: int = Field(
         default=900, alias="FETCH_CACHE_TTL_SECONDS"
     )

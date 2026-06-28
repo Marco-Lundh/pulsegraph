@@ -6,7 +6,13 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from pulsegraph.api.deps import get_db, require_admin
-from pulsegraph.api.health import spend_status
+from pulsegraph.api.health import (
+    paused_sources,
+    queue_depth,
+    queue_status,
+    spend_status,
+    worker_alive,
+)
 from pulsegraph.api.schemas import (
     ReviewDecisionCreate,
     SourceHealthOut,
@@ -34,20 +40,32 @@ def list_source_health(
 
 
 @router.get("/ops")
-def operational_status(_: User = Depends(require_admin)) -> dict:
-    """Operator view of cloud-model spend versus the cap (ADR 0020).
+def operational_status(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+) -> dict:
+    """Operator dashboard of infrastructure signals (ADR 0020).
 
-    ``spend.near_cap`` is the alert signal operators watch; the figure is
-    read from the live Redis spend counter (ADR 0008).
+    Distinct from product eval-health (ADR 0006): cloud-model spend vs the
+    cap (ADR 0008), queue depth and worker liveness (ADR 0015), and any
+    sources paused for drift (ADR 0010). Each section carries the alert
+    flag operators watch.
     """
     settings = get_settings()
-    spend = get_monthly_cost(make_redis(settings.redis_url))
+    redis = make_redis(settings.redis_url)
+    paused = paused_sources(db)
     return {
         "spend": spend_status(
-            spend,
+            get_monthly_cost(redis),
             settings.monthly_cost_cap_usd,
             settings.cost_alert_threshold_ratio,
         ),
+        "queue": queue_status(
+            queue_depth(redis),
+            worker_alive(redis),
+            settings.queue_backlog_alert_threshold,
+        ),
+        "sources": {"paused": paused, "alert": len(paused) > 0},
     }
 
 
