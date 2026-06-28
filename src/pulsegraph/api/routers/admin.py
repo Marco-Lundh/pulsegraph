@@ -6,10 +6,12 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from pulsegraph.api.deps import get_db, require_admin
+from pulsegraph.api.health import spend_status
 from pulsegraph.api.schemas import (
     ReviewDecisionCreate,
     SourceHealthOut,
 )
+from pulsegraph.config import get_settings
 from pulsegraph.db.models import (
     AuditLogEntry,
     Evaluation,
@@ -18,6 +20,7 @@ from pulsegraph.db.models import (
     User,
 )
 from pulsegraph.domain.enums import EvalStatus
+from pulsegraph.redis_client import get_monthly_cost, make_redis
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -28,6 +31,24 @@ def list_source_health(
     _: User = Depends(require_admin),
 ) -> list[SourceHealth]:
     return db.query(SourceHealth).all()
+
+
+@router.get("/ops")
+def operational_status(_: User = Depends(require_admin)) -> dict:
+    """Operator view of cloud-model spend versus the cap (ADR 0020).
+
+    ``spend.near_cap`` is the alert signal operators watch; the figure is
+    read from the live Redis spend counter (ADR 0008).
+    """
+    settings = get_settings()
+    spend = get_monthly_cost(make_redis(settings.redis_url))
+    return {
+        "spend": spend_status(
+            spend,
+            settings.monthly_cost_cap_usd,
+            settings.cost_alert_threshold_ratio,
+        ),
+    }
 
 
 @router.get("/review-queue")

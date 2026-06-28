@@ -2,7 +2,14 @@
 
 from fastapi import FastAPI
 
-from pulsegraph.api.routers import admin, auth, notifications, runs, watches
+from pulsegraph.api.routers import (
+    admin,
+    auth,
+    meta,
+    notifications,
+    runs,
+    watches,
+)
 
 
 def create_app() -> FastAPI:
@@ -12,10 +19,7 @@ def create_app() -> FastAPI:
         version="0.1.0",
     )
 
-    @app.get("/health", tags=["meta"])
-    def health() -> dict:
-        return {"status": "ok"}
-
+    app.include_router(meta.router)
     app.include_router(auth.router)
     app.include_router(watches.router)
     app.include_router(runs.router)

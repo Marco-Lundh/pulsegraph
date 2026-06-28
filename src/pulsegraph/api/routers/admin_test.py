@@ -50,6 +50,24 @@ def test_non_admin_cannot_access_admin_routes() -> None:
     assert resp.status_code == 403
 
 
+def test_admin_ops_reports_spend_vs_cap(monkeypatch) -> None:
+    from pulsegraph.api.routers import admin as admin_router
+
+    # Default cap is 10.0 with a 0.8 alert ratio, so 8.5 is near the cap.
+    monkeypatch.setattr(admin_router, "get_monthly_cost", lambda _r: 8.5)
+    admin = _make_user(UserRole.ADMIN)
+    db = FakeSession(admin)
+    client, _, _ = make_client(db=db, user=admin)
+
+    resp = client.get("/admin/ops")
+
+    assert resp.status_code == 200
+    spend = resp.json()["spend"]
+    assert spend["spend_usd"] == 8.5
+    assert spend["near_cap"] is True
+    assert spend["over_cap"] is False
+
+
 def test_admin_can_access_source_health() -> None:
     admin = _make_user(UserRole.ADMIN)
     sh = _source_health()

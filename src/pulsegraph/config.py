@@ -105,6 +105,11 @@ class Settings(BaseSettings):
     monthly_cost_cap_usd: float = Field(
         default=10.0, alias="MONTHLY_COST_CAP_USD"
     )
+    # Operator alert threshold (ADR 0020): flag spend as near-cap once it
+    # reaches this fraction of the monthly cap.
+    cost_alert_threshold_ratio: float = Field(
+        default=0.8, alias="COST_ALERT_THRESHOLD_RATIO"
+    )
     fetch_cache_ttl_seconds: int = Field(
         default=900, alias="FETCH_CACHE_TTL_SECONDS"
     )
