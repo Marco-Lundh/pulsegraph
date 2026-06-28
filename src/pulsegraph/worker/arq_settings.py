@@ -17,6 +17,7 @@ from pulsegraph.redis_client import make_redis
 from pulsegraph.sources.entsoe import EntsoePlugin
 from pulsegraph.sources.jobtech import JobTechPlugin
 from pulsegraph.sources.riksdagen import RiksdagenPlugin
+from pulsegraph.worker.alerts import run_alerts
 from pulsegraph.worker.digest import run_digest
 from pulsegraph.worker.retention import run_retention
 from pulsegraph.worker.scheduler import enqueue_due_watches
@@ -95,6 +96,8 @@ class WorkerSettings:
         cron(run_retention, hour=3, minute=0),
         # Daily notification digest, once daily at 06:00 (ADR 0016).
         cron(run_digest, hour=6, minute=0),
+        # Operator alert sweep, every 15 minutes (ADR 0020).
+        cron(run_alerts, minute={0, 15, 30, 45}),
     ]
     on_startup = startup
     on_shutdown = shutdown

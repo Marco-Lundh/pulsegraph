@@ -51,12 +51,13 @@ def test_non_admin_cannot_access_admin_routes() -> None:
 
 
 def _patch_ops(monkeypatch, *, spend=8.5, depth=0, worker=True) -> None:
-    from pulsegraph.api.routers import admin as admin_router
+    from pulsegraph.api import health
 
-    # Stub the Redis-backed probes so the endpoint needs no live Redis.
-    monkeypatch.setattr(admin_router, "get_monthly_cost", lambda _r: spend)
-    monkeypatch.setattr(admin_router, "queue_depth", lambda _r: depth)
-    monkeypatch.setattr(admin_router, "worker_alive", lambda _r: worker)
+    # Stub the Redis-backed probes (called inside operational_summary) so
+    # the endpoint needs no live Redis.
+    monkeypatch.setattr(health, "get_monthly_cost", lambda _r: spend)
+    monkeypatch.setattr(health, "queue_depth", lambda _r: depth)
+    monkeypatch.setattr(health, "worker_alive", lambda _r: worker)
 
 
 def test_admin_ops_reports_spend_vs_cap(monkeypatch) -> None:
