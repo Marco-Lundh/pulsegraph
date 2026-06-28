@@ -18,6 +18,7 @@ def test_defaults_are_local_first() -> None:
     assert "localhost" in settings.database_url
     assert settings.use_cloud_model is False
     assert settings.langsmith_enabled is False
+    assert settings.data_retention_days == 90
 
 
 # --- cloud_model_available ---
