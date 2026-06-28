@@ -110,10 +110,19 @@ class Settings(BaseSettings):
     cost_alert_threshold_ratio: float = Field(
         default=0.8, alias="COST_ALERT_THRESHOLD_RATIO"
     )
-    # Operator alert (ADR 0020): flag the queue as backlogged once this
-    # many jobs are waiting.
+    # Operator alerts (ADR 0020): flag the queue as backlogged once this
+    # many jobs are waiting, and runs as slow once p95 exceeds this many
+    # seconds. Firing alerts are pushed to the operator webhook when set
+    # (off by default → poll /admin/ops instead).
     queue_backlog_alert_threshold: int = Field(
         default=100, alias="QUEUE_BACKLOG_ALERT_THRESHOLD"
+    )
+    job_latency_alert_seconds: float = Field(
+        default=300.0, alias="JOB_LATENCY_ALERT_SECONDS"
+    )
+    operator_webhook_url: str = Field(default="", alias="OPERATOR_WEBHOOK_URL")
+    operator_webhook_secret: str = Field(
+        default="", alias="OPERATOR_WEBHOOK_SECRET"
     )
     fetch_cache_ttl_seconds: int = Field(
         default=900, alias="FETCH_CACHE_TTL_SECONDS"

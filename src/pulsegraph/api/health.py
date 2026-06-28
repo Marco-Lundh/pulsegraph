@@ -6,6 +6,7 @@ dependency-injected function returning a :class:`CheckResult`, so the
 readiness probe is testable without real infrastructure.
 """
 
+import datetime
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -14,8 +15,10 @@ import httpx
 from arq.constants import default_queue_name, health_check_key_suffix
 from sqlalchemy import text
 
-from pulsegraph.db.models import SourceHealth
+from pulsegraph.config import Settings
+from pulsegraph.db.models import PipelineRun, SourceHealth
 from pulsegraph.domain.enums import SourceStatus
+from pulsegraph.redis_client import get_monthly_cost
 
 # arq writes the queue as a sorted set and refreshes a health-check key
 # with a short TTL while the worker is alive (see arq.constants).
@@ -139,3 +142,101 @@ def spend_status(spend_usd: float, cap_usd: float, alert_ratio: float) -> dict:
         "near_cap": ratio >= alert_ratio,
         "over_cap": spend_usd >= cap_usd,
     }
+
+
+def run_latencies(
+    db: Any, now: datetime.datetime, lookback_hours: int = 24
+) -> list[float]:
+    """Return finished-run durations (seconds) within the lookback window.
+
+    Filtered in Python too, so it is correct under the FakeSession test
+    double whose ``filter`` is a no-op.
+    """
+    cutoff = now - datetime.timedelta(hours=lookback_hours)
+    durations = []
+    for run in (
+        db.query(PipelineRun).filter(PipelineRun.finished_at >= cutoff).all()
+    ):
+        if run.finished_at is None or run.started_at is None:
+            continue
+        if run.finished_at < cutoff:
+            continue
+        durations.append((run.finished_at - run.started_at).total_seconds())
+    return durations
+
+
+def latency_stats(durations: list[float], alert_seconds: float) -> dict:
+    """Summarize run durations with a p95 the operator alerts on."""
+    if not durations:
+        return {
+            "count": 0,
+            "avg_seconds": 0.0,
+            "p95_seconds": 0.0,
+            "max_seconds": 0.0,
+            "slow": False,
+        }
+    ordered = sorted(durations)
+    # Nearest-rank p95: the smallest value at or above the 95th percentile.
+    index = max(0, round(0.95 * len(ordered)) - 1)
+    p95 = ordered[index]
+    return {
+        "count": len(ordered),
+        "avg_seconds": round(sum(ordered) / len(ordered), 2),
+        "p95_seconds": round(p95, 2),
+        "max_seconds": round(ordered[-1], 2),
+        "slow": p95 > alert_seconds,
+    }
+
+
+def operational_summary(db: Any, redis: Any, settings: Settings) -> dict:
+    """Assemble the full operator dashboard (ADR 0020).
+
+    Shared by ``GET /admin/ops`` and the alert job so both read the same
+    signals. Each section carries the alert flag operators watch.
+    """
+    paused = paused_sources(db)
+    now = datetime.datetime.now(datetime.UTC)
+    return {
+        "spend": spend_status(
+            get_monthly_cost(redis),
+            settings.monthly_cost_cap_usd,
+            settings.cost_alert_threshold_ratio,
+        ),
+        "queue": queue_status(
+            queue_depth(redis),
+            worker_alive(redis),
+            settings.queue_backlog_alert_threshold,
+        ),
+        "sources": {"paused": paused, "alert": len(paused) > 0},
+        "latency": latency_stats(
+            run_latencies(db, now), settings.job_latency_alert_seconds
+        ),
+    }
+
+
+def collect_alerts(summary: dict) -> list[str]:
+    """Extract the currently-firing operator alerts from a summary.
+
+    Empty when nothing is wrong — the alert job sends only when this is
+    non-empty (ADR 0020).
+    """
+    alerts = []
+    spend = summary["spend"]
+    if spend["over_cap"]:
+        alerts.append(f"cost cap reached: ${spend['spend_usd']}")
+    elif spend["near_cap"]:
+        alerts.append(f"spend near cap: {spend['ratio']:.0%} of the cap")
+
+    queue = summary["queue"]
+    if queue["worker_down"]:
+        alerts.append("no worker is draining the queue")
+    if queue["backlog"]:
+        alerts.append(f"queue backlog: {queue['depth']} jobs")
+
+    if summary["sources"]["alert"]:
+        paused = ", ".join(summary["sources"]["paused"])
+        alerts.append(f"sources paused for drift: {paused}")
+
+    if summary["latency"]["slow"]:
+        alerts.append(f"slow runs: p95 {summary['latency']['p95_seconds']}s")
+    return alerts

@@ -6,13 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from pulsegraph.api.deps import get_db, require_admin
-from pulsegraph.api.health import (
-    paused_sources,
-    queue_depth,
-    queue_status,
-    spend_status,
-    worker_alive,
-)
+from pulsegraph.api.health import operational_summary
 from pulsegraph.api.schemas import (
     ReviewDecisionCreate,
     SourceHealthOut,
@@ -26,7 +20,7 @@ from pulsegraph.db.models import (
     User,
 )
 from pulsegraph.domain.enums import EvalStatus
-from pulsegraph.redis_client import get_monthly_cost, make_redis
+from pulsegraph.redis_client import make_redis
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -47,26 +41,12 @@ def operational_status(
     """Operator dashboard of infrastructure signals (ADR 0020).
 
     Distinct from product eval-health (ADR 0006): cloud-model spend vs the
-    cap (ADR 0008), queue depth and worker liveness (ADR 0015), and any
-    sources paused for drift (ADR 0010). Each section carries the alert
-    flag operators watch.
+    cap (ADR 0008), queue depth and worker liveness (ADR 0015), run
+    latency, and any sources paused for drift (ADR 0010). Each section
+    carries the alert flag operators watch.
     """
     settings = get_settings()
-    redis = make_redis(settings.redis_url)
-    paused = paused_sources(db)
-    return {
-        "spend": spend_status(
-            get_monthly_cost(redis),
-            settings.monthly_cost_cap_usd,
-            settings.cost_alert_threshold_ratio,
-        ),
-        "queue": queue_status(
-            queue_depth(redis),
-            worker_alive(redis),
-            settings.queue_backlog_alert_threshold,
-        ),
-        "sources": {"paused": paused, "alert": len(paused) > 0},
-    }
+    return operational_summary(db, make_redis(settings.redis_url), settings)
 
 
 @router.get("/review-queue")

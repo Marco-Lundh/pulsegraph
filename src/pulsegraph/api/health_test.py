@@ -1,5 +1,8 @@
 """Tests for operational health checks and spend signal (ADR 0020)."""
 
+import datetime
+import uuid
+
 import fakeredis
 
 from pulsegraph.api._fake import FakeSession
@@ -8,15 +11,22 @@ from pulsegraph.api.health import (
     check_database,
     check_ollama,
     check_redis,
+    collect_alerts,
+    latency_stats,
+    operational_summary,
     paused_sources,
     queue_depth,
     queue_status,
+    run_latencies,
     spend_status,
     summarize,
     worker_alive,
 )
-from pulsegraph.db.models import SourceHealth
-from pulsegraph.domain.enums import SourceKind, SourceStatus
+from pulsegraph.config import Settings
+from pulsegraph.db.models import PipelineRun, SourceHealth
+from pulsegraph.domain.enums import RunStatus, SourceKind, SourceStatus
+
+_NOW = datetime.datetime(2026, 6, 28, 12, 0, tzinfo=datetime.UTC)
 
 
 class _OkResponse:
@@ -190,3 +200,104 @@ def test_spend_status_handles_zero_cap() -> None:
     s = spend_status(spend_usd=1.0, cap_usd=0.0, alert_ratio=0.8)
     assert s["ratio"] == 0.0
     assert s["over_cap"] is True
+
+
+# --- latency ---
+
+
+def _run(age_hours: float, duration_s: float) -> PipelineRun:
+    started = _NOW - datetime.timedelta(hours=age_hours)
+    return PipelineRun(
+        id=uuid.uuid4(),
+        watch_id=uuid.uuid4(),
+        status=RunStatus.SUCCEEDED,
+        started_at=started,
+        finished_at=started + datetime.timedelta(seconds=duration_s),
+    )
+
+
+def test_run_latencies_within_window() -> None:
+    db = FakeSession(_run(1, 10.0), _run(2, 20.0))
+    assert sorted(run_latencies(db, _NOW)) == [10.0, 20.0]
+
+
+def test_run_latencies_excludes_old_runs() -> None:
+    db = FakeSession(_run(1, 10.0), _run(48, 99.0))
+    assert run_latencies(db, _NOW) == [10.0]
+
+
+def test_latency_stats_empty() -> None:
+    s = latency_stats([], alert_seconds=300)
+    assert s == {
+        "count": 0,
+        "avg_seconds": 0.0,
+        "p95_seconds": 0.0,
+        "max_seconds": 0.0,
+        "slow": False,
+    }
+
+
+def test_latency_stats_values_and_slow_flag() -> None:
+    s = latency_stats([10.0, 20.0, 600.0], alert_seconds=300)
+    assert s["count"] == 3
+    assert s["max_seconds"] == 600.0
+    assert s["p95_seconds"] == 600.0
+    assert s["slow"] is True
+
+
+# --- collect_alerts ---
+
+
+def _summary(**overrides) -> dict:
+    base = {
+        "spend": {
+            "spend_usd": 1.0,
+            "ratio": 0.1,
+            "near_cap": False,
+            "over_cap": False,
+        },
+        "queue": {"depth": 0, "worker_down": False, "backlog": False},
+        "sources": {"paused": [], "alert": False},
+        "latency": {"p95_seconds": 1.0, "slow": False},
+    }
+    base.update(overrides)
+    return base
+
+
+def test_collect_alerts_empty_when_healthy() -> None:
+    assert collect_alerts(_summary()) == []
+
+
+def test_collect_alerts_flags_each_signal() -> None:
+    summary = _summary(
+        spend={
+            "spend_usd": 11.0,
+            "ratio": 1.1,
+            "near_cap": True,
+            "over_cap": True,
+        },
+        queue={"depth": 200, "worker_down": True, "backlog": True},
+        sources={"paused": ["jobtech"], "alert": True},
+        latency={"p95_seconds": 900.0, "slow": True},
+    )
+    alerts = collect_alerts(summary)
+    joined = " ".join(alerts)
+    assert "cost cap reached" in joined
+    assert "no worker" in joined
+    assert "backlog" in joined
+    assert "paused" in joined
+    assert "slow runs" in joined
+
+
+# --- operational_summary ---
+
+
+def test_operational_summary_assembles_sections(monkeypatch) -> None:
+    import pulsegraph.api.health as health_mod
+
+    monkeypatch.setattr(health_mod, "get_monthly_cost", lambda _r: 2.0)
+    r = fakeredis.FakeRedis(decode_responses=True)
+    db = FakeSession()
+    summary = operational_summary(db, r, Settings(_env_file=None))
+    assert set(summary) == {"spend", "queue", "sources", "latency"}
+    assert summary["queue"]["worker_alive"] is False
