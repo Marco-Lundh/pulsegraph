@@ -115,6 +115,8 @@ def test_run_watch_core_creates_run_record() -> None:
     runs = db.query(PipelineRun).all()
     assert len(runs) == 1
     assert runs[0].status == RunStatus.SUCCEEDED
+    # Tracing is off by default, so no trace id is recorded (ADR 0007).
+    assert runs[0].langsmith_trace_id is None
 
 
 def test_run_watch_core_skips_if_already_running() -> None:

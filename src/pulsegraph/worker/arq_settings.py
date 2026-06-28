@@ -7,6 +7,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from pulsegraph.config import get_settings
+from pulsegraph.observability import configure_tracing
 from pulsegraph.pipeline.agents import PipelineDeps
 from pulsegraph.pipeline.anthropic_client import ClaudeModelClient
 from pulsegraph.pipeline.hybrid import HybridModelClient
@@ -68,6 +69,9 @@ def _build_pipeline_deps(settings) -> PipelineDeps:
 
 async def startup(ctx: dict) -> None:
     settings = get_settings()
+    # Turn on LangSmith tracing for the worker process when configured
+    # (ADR 0007); a no-op under the local-first default.
+    configure_tracing(settings)
     engine = create_engine(settings.database_url)
     ctx["db_factory"] = sessionmaker(bind=engine)
     r = make_redis(settings.redis_url)

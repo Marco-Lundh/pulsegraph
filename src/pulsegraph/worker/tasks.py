@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from pulsegraph.config import get_settings
 from pulsegraph.db.models import PipelineRun, Watch
 from pulsegraph.domain.enums import ModelKind, RunStatus
+from pulsegraph.observability import traced_run
 from pulsegraph.pipeline.agents import PipelineDeps
 from pulsegraph.pipeline.contracts import WatchSpec
 from pulsegraph.pipeline.graph import run_pipeline
@@ -81,12 +82,16 @@ def run_watch_core(
     run_deps = replace(deps, sink=build_notification_sink(settings, db))
 
     try:
-        state = run_pipeline(
-            run_deps,
-            spec,
-            seen_hashes=seen_hashes,
-            sent_dedup_keys=sent_dedup_keys,
-        )
+        # Trace the LangGraph execution to LangSmith when enabled; the
+        # captured trace id is persisted below so the run links to it
+        # (ADR 0007). A no-op when tracing is off (local-first).
+        with traced_run(settings) as trace:
+            state = run_pipeline(
+                run_deps,
+                spec,
+                seen_hashes=seen_hashes,
+                sent_dedup_keys=sent_dedup_keys,
+            )
         item_count = len(state.get("items") or [])
         persist_run_results(
             db,
@@ -110,6 +115,7 @@ def run_watch_core(
     finally:
         now = datetime.datetime.now(datetime.UTC)
         run.finished_at = now
+        run.langsmith_trace_id = trace.trace_id
         watch.last_run_at = now
         watch.next_run_at = now + watch.schedule_interval
         db.commit()

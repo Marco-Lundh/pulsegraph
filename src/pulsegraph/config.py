@@ -71,6 +71,9 @@ class Settings(BaseSettings):
 
     langsmith_enabled: bool = Field(default=False, alias="LANGSMITH_ENABLED")
     langsmith_api_key: str = Field(default="", alias="LANGSMITH_API_KEY")
+    langsmith_project: str = Field(
+        default="pulsegraph", alias="LANGSMITH_PROJECT"
+    )
 
     # Notification delivery channels (ADR 0016). Both are off by default
     # so the local-first system never reaches outside the machine.
@@ -123,6 +126,16 @@ class Settings(BaseSettings):
         Analyzer can fall back to the local model instead of failing.
         """
         return self.use_cloud_model and bool(self.anthropic_api_key)
+
+    @property
+    def langsmith_active(self) -> bool:
+        """Whether LangSmith tracing is both enabled and configured.
+
+        Off (the local-first default) unless tracing is enabled and an
+        API key is present, so an enabled-but-unkeyed misconfiguration
+        never attempts to reach the LangSmith service (ADR 0007).
+        """
+        return self.langsmith_enabled and bool(self.langsmith_api_key)
 
 
 @lru_cache
