@@ -40,3 +40,22 @@ def test_cloud_available_when_enabled_and_keyed() -> None:
     settings = _settings(USE_CLOUD_MODEL="true", ANTHROPIC_API_KEY="k")
 
     assert settings.cloud_model_available is True
+
+
+# --- langsmith_active ---
+
+
+def test_langsmith_inactive_by_default() -> None:
+    assert _settings().langsmith_active is False
+
+
+def test_langsmith_inactive_when_enabled_but_unkeyed() -> None:
+    settings = _settings(LANGSMITH_ENABLED="true", LANGSMITH_API_KEY="")
+
+    assert settings.langsmith_active is False
+
+
+def test_langsmith_active_when_enabled_and_keyed() -> None:
+    settings = _settings(LANGSMITH_ENABLED="true", LANGSMITH_API_KEY="k")
+
+    assert settings.langsmith_active is True
