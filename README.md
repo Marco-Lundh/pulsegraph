@@ -121,13 +121,14 @@ uv run python scripts/smoke_e2e.py         # e2e smoke against a real Postgres +
 
 CI (`.github/workflows/ci.yml`) runs the four checks above — lint, unit
 tests, the offline eval gate, and the e2e smoke test against real
-`pgvector` and `redis` service containers — on every push/PR to `master`.
+`pgvector` and `redis` service containers — plus a separate dashboard job
+(`npm run lint` and `npm run build`, which itself runs `tsc -b`) — on
+every push/PR to `master`.
 
-The dashboard has no CI job yet; run its checks locally before pushing a
-frontend change:
+To run the dashboard checks locally before pushing a frontend change:
 
 ```bash
-cd dashboard && npm run lint && npx tsc -b && npm run build
+cd dashboard && npm run lint && npm run build
 ```
 
 ## Project layout
