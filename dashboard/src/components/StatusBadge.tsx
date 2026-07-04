@@ -42,6 +42,31 @@ const statusConfig: Record<
     color: 'color-mix(in srgb, var(--color-text-muted) 15%, transparent)',
     dot: 'var(--color-text-muted)',
   },
+  healthy: {
+    label: 'Healthy',
+    color: 'color-mix(in srgb, var(--color-success) 15%, transparent)',
+    dot: 'var(--color-success)',
+  },
+  review: {
+    label: 'Needs review',
+    color: 'color-mix(in srgb, var(--color-warning) 15%, transparent)',
+    dot: 'var(--color-warning)',
+  },
+  approved: {
+    label: 'Approved',
+    color: 'color-mix(in srgb, var(--color-success) 15%, transparent)',
+    dot: 'var(--color-success)',
+  },
+  rejected: {
+    label: 'Rejected',
+    color: 'color-mix(in srgb, var(--color-danger) 15%, transparent)',
+    dot: 'var(--color-danger)',
+  },
+  corrected: {
+    label: 'Corrected',
+    color: 'color-mix(in srgb, var(--color-accent) 15%, transparent)',
+    dot: 'var(--color-accent)',
+  },
 };
 
 export function StatusBadge({ status, size = 'sm' }: StatusBadgeProps) {

@@ -1,13 +1,16 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import {
   Activity,
   Bell,
   Eye,
   LayoutDashboard,
   LogOut,
+  ShieldCheck,
   Zap,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { adminApi, countOpsAlerts } from '../api/admin';
 
 const navItems = [
   { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
@@ -19,6 +22,15 @@ const navItems = [
 export function Layout() {
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
+  const isAdmin = user?.role === 'admin';
+
+  const { data: ops } = useQuery({
+    queryKey: ['admin', 'ops'],
+    queryFn: () => adminApi.ops(),
+    enabled: isAdmin,
+    refetchInterval: 30000,
+  });
+  const alertCount = ops ? countOpsAlerts(ops) : 0;
 
   const handleSignOut = () => {
     signOut();
@@ -73,6 +85,34 @@ export function Layout() {
               {label}
             </NavLink>
           ))}
+
+          {isAdmin && (
+            <NavLink
+              to="/admin"
+              className={({ isActive }) =>
+                [
+                  'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+                  isActive ? 'bg-white/10' : 'hover:bg-white/5',
+                ].join(' ')
+              }
+              style={({ isActive }) => ({
+                color: isActive
+                  ? 'var(--color-sidebar-text)'
+                  : 'var(--color-sidebar-text-dim)',
+              })}
+            >
+              <ShieldCheck size={16} />
+              Admin
+              {alertCount > 0 && (
+                <span
+                  className="ml-auto flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-semibold text-white"
+                  style={{ backgroundColor: 'var(--color-danger)' }}
+                >
+                  {alertCount}
+                </span>
+              )}
+            </NavLink>
+          )}
         </nav>
 
         <div
