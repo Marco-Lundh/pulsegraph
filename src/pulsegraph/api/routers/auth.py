@@ -78,6 +78,11 @@ def login(body: LoginRequest, db: Session = Depends(get_db)) -> dict:
     return {"access_token": create_token(user.id), "token_type": "bearer"}
 
 
+@router.get("/me", response_model=UserOut)
+def get_me(user: User = Depends(get_current_user)) -> User:
+    return user
+
+
 @router.get("/me/export")
 def export_account(
     db: Session = Depends(get_db),
