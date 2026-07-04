@@ -7,7 +7,7 @@ const statusConfig: Record<
   string,
   { label: string; color: string; dot: string }
 > = {
-  success: {
+  succeeded: {
     label: 'Success',
     color: 'color-mix(in srgb, var(--color-success) 15%, transparent)',
     dot: 'var(--color-success)',
@@ -27,7 +27,7 @@ const statusConfig: Record<
     color: 'color-mix(in srgb, var(--color-warning) 15%, transparent)',
     dot: 'var(--color-warning)',
   },
-  delivered: {
+  sent: {
     label: 'Delivered',
     color: 'color-mix(in srgb, var(--color-success) 15%, transparent)',
     dot: 'var(--color-success)',
