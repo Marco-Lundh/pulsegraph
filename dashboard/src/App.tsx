@@ -1,6 +1,6 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { AuthProvider } from './contexts/AuthContext';
+import { AuthProvider } from './contexts/AuthProvider';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { AdminRoute } from './components/AdminRoute';
 import { Layout } from './components/Layout';
@@ -12,6 +12,7 @@ import { WatchDetailPage } from './pages/WatchDetailPage';
 import { CreateWatchPage } from './pages/CreateWatchPage';
 import { NotificationsPage } from './pages/NotificationsPage';
 import { RunsPage } from './pages/RunsPage';
+import { SettingsPage } from './pages/SettingsPage';
 import { AdminLayout } from './pages/AdminLayout';
 import { AdminOpsPage } from './pages/AdminOpsPage';
 import { AdminSourceHealthPage } from './pages/AdminSourceHealthPage';
@@ -40,6 +41,7 @@ export default function App() {
               <Route path="/watches/:id" element={<WatchDetailPage />} />
               <Route path="/notifications" element={<NotificationsPage />} />
               <Route path="/runs" element={<RunsPage />} />
+              <Route path="/settings" element={<SettingsPage />} />
               <Route
                 path="/admin"
                 element={

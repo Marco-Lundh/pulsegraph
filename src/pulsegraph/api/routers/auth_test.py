@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from pulsegraph.api._fake import FakeSession, make_client
 from pulsegraph.api.app import create_app
-from pulsegraph.api.auth import hash_password
+from pulsegraph.api.auth import decode_token, hash_password
 from pulsegraph.api.deps import get_db
 from pulsegraph.db.models import AuditLogEntry, User
 from pulsegraph.domain.enums import UserRole
@@ -54,6 +54,18 @@ def test_register_duplicate_email_returns_409() -> None:
     assert resp.status_code == 409
 
 
+def test_register_new_email_with_other_users_seeded_succeeds() -> None:
+    # FakeSession.filter() is a no-op, so the duplicate-email check must
+    # re-match in Python, not just take the first stored User.
+    other = _existing_user("someone-else@example.com")
+    db = FakeSession(other)
+    resp = _client(db).post(
+        "/auth/register",
+        json={"email": "brand-new@example.com", "password": "pw123"},
+    )
+    assert resp.status_code == 201
+
+
 # --- login ---
 
 
@@ -87,6 +99,22 @@ def test_login_unknown_email_returns_401() -> None:
         json={"email": "ghost@example.com", "password": "x"},
     )
     assert resp.status_code == 401
+
+
+def test_login_matches_correct_user_among_several() -> None:
+    # Same FakeSession.filter()-is-a-no-op gotcha: login must re-match by
+    # email in Python, not just take the first stored User. Both fixture
+    # users share the same password, so a stale-match bug returns 200 with
+    # the WRONG user's token rather than a visible 401 — decode it.
+    first = _existing_user("first@example.com")
+    second = _existing_user("second@example.com")
+    db = FakeSession(first, second)
+    resp = _client(db).post(
+        "/auth/login",
+        json={"email": second.email, "password": "secret"},
+    )
+    assert resp.status_code == 200
+    assert decode_token(resp.json()["access_token"]) == second.id
 
 
 # --- get current user ---

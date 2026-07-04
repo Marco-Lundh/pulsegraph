@@ -187,3 +187,19 @@ def test_multi_sink_isolates_a_failing_channel() -> None:
     sink.send(draft)
 
     assert good.received == [draft]
+
+
+def test_multi_sink_send_returns_true_when_all_succeed() -> None:
+    sink = MultiSink([_CollectingSink(), _CollectingSink()])
+    assert sink.send(_draft()) is True
+
+
+def test_multi_sink_send_returns_false_when_any_channel_fails() -> None:
+    # A caller that needs to know delivery actually happened (the digest
+    # job, ADR 0016) relies on this to decide whether to retry.
+    sink = MultiSink([_CollectingSink(), _FailingSink()])
+    assert sink.send(_draft()) is False
+
+
+def test_multi_sink_send_returns_true_with_no_channels() -> None:
+    assert MultiSink([]).send(_draft()) is True

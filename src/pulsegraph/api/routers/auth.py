@@ -46,7 +46,16 @@ def _audit(
     status_code=status.HTTP_201_CREATED,
 )
 def register(body: RegisterRequest, db: Session = Depends(get_db)) -> User:
-    existing = db.query(User).filter(User.email == body.email).first()
+    # FakeSession.filter() is a no-op in tests, so re-match in Python too
+    # (mirrors the pattern used throughout worker/*.py and api/export.py).
+    existing = next(
+        (
+            u
+            for u in db.query(User).filter(User.email == body.email).all()
+            if u.email == body.email
+        ),
+        None,
+    )
     if existing:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -67,7 +76,14 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)) -> User:
 
 @router.post("/login", response_model=TokenResponse)
 def login(body: LoginRequest, db: Session = Depends(get_db)) -> dict:
-    user = db.query(User).filter(User.email == body.email).first()
+    user = next(
+        (
+            u
+            for u in db.query(User).filter(User.email == body.email).all()
+            if u.email == body.email
+        ),
+        None,
+    )
     if user is None or not verify_password(body.password, user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

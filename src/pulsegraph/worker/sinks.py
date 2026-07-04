@@ -40,17 +40,29 @@ def _destination_resolver(
 
     def resolve(user_id: str) -> str | None:
         uid = uuid.UUID(user_id)
-        setting = (
-            db.query(NotificationSetting)
-            .filter(
-                NotificationSetting.user_id == uid,
-                NotificationSetting.channel == channel,
-                NotificationSetting.frequency == frequency,
-                NotificationSetting.is_active.is_(True),
-            )
-            .first()
+        # FakeSession.filter() is a no-op in tests, so re-check every
+        # condition in Python too (mirrors the pattern used throughout
+        # worker/*.py) — otherwise the first matching-frequency row in the
+        # whole store wins, leaking another user's destination.
+        setting = next(
+            (
+                s
+                for s in db.query(NotificationSetting)
+                .filter(
+                    NotificationSetting.user_id == uid,
+                    NotificationSetting.channel == channel,
+                    NotificationSetting.frequency == frequency,
+                    NotificationSetting.is_active.is_(True),
+                )
+                .all()
+                if s.user_id == uid
+                and s.channel == channel
+                and s.frequency == frequency
+                and s.is_active
+            ),
+            None,
         )
-        if setting is None or setting.frequency != frequency:
+        if setting is None:
             return None
         if setting.destination:
             return setting.destination
@@ -66,12 +78,14 @@ def build_notification_sink(
     settings: Settings,
     db: Session,
     frequency: NotificationFrequency = NotificationFrequency.INSTANT,
-) -> NotificationSink:
+) -> MultiSink:
     """Build a ``MultiSink`` of the channels enabled in *settings*.
 
     Only users whose channel setting matches *frequency* are delivered to,
     so the same builder produces the instant sink (used per run) and the
-    digest sink (used by the daily digest job).
+    digest sink (used by the daily digest job). Typed as the concrete
+    ``MultiSink`` (not the ``NotificationSink`` protocol) so callers can
+    rely on ``send()``'s per-user success/failure return value (ADR 0016).
     """
     sinks: list[NotificationSink] = []
     if settings.email_enabled:

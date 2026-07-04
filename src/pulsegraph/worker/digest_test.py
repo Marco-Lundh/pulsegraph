@@ -119,7 +119,7 @@ def test_send_digests_batches_and_marks_sent() -> None:
 
     result = send_digests(db, Settings(_env_file=None), now=_NOW)
 
-    assert result == {"users": 1, "notifications": 2}
+    assert result == {"users": 1, "notifications": 2, "failed_users": 0}
     assert n1.status == NotificationStatus.SENT
     assert n1.delivered_at == _NOW
     assert n2.status == NotificationStatus.SENT
@@ -128,4 +128,51 @@ def test_send_digests_batches_and_marks_sent() -> None:
 def test_send_digests_noop_without_pending() -> None:
     db = FakeSession()
     result = send_digests(db, Settings(_env_file=None), now=_NOW)
-    assert result == {"users": 0, "notifications": 0}
+    assert result == {"users": 0, "notifications": 0, "failed_users": 0}
+
+
+class _FailingSink:
+    def send(self, draft: object) -> bool:
+        return False
+
+
+def test_send_digests_leaves_pending_on_delivery_failure(monkeypatch) -> None:
+    # A failed push must NOT be marked SENT — otherwise the notification
+    # is lost forever instead of being retried on the next scheduled run.
+    uid = uuid.uuid4()
+    a1 = _analysis("Update one")
+    n1 = _pending(uid, a1.id, "jobtech:1")
+    db = FakeSession(a1, n1)
+    monkeypatch.setattr(
+        "pulsegraph.worker.digest.build_notification_sink",
+        lambda *args, **kwargs: _FailingSink(),
+    )
+
+    result = send_digests(db, Settings(_env_file=None), now=_NOW)
+
+    assert result == {"users": 1, "notifications": 0, "failed_users": 1}
+    assert n1.status == NotificationStatus.PENDING
+    assert n1.delivered_at is None
+
+
+def test_send_digests_only_retries_the_failed_user(monkeypatch) -> None:
+    ok_uid, failing_uid = uuid.uuid4(), uuid.uuid4()
+    a_ok, a_fail = _analysis("Update one"), _analysis("Update two")
+    n_ok = _pending(ok_uid, a_ok.id, "jobtech:1")
+    n_fail = _pending(failing_uid, a_fail.id, "jobtech:2")
+    db = FakeSession(a_ok, a_fail, n_ok, n_fail)
+
+    class _PerUserSink:
+        def send(self, draft) -> bool:
+            return str(failing_uid) not in draft.user_id
+
+    monkeypatch.setattr(
+        "pulsegraph.worker.digest.build_notification_sink",
+        lambda *args, **kwargs: _PerUserSink(),
+    )
+
+    result = send_digests(db, Settings(_env_file=None), now=_NOW)
+
+    assert result == {"users": 2, "notifications": 1, "failed_users": 1}
+    assert n_ok.status == NotificationStatus.SENT
+    assert n_fail.status == NotificationStatus.PENDING

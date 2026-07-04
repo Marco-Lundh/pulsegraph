@@ -168,14 +168,23 @@ class MultiSink:
     def __init__(self, sinks: Sequence[NotificationSink]) -> None:
         self._sinks = tuple(sinks)
 
-    def send(self, draft: NotificationDraft) -> None:
-        """Deliver ``draft`` over every channel, best-effort."""
+    def send(self, draft: NotificationDraft) -> bool:
+        """Deliver ``draft`` over every channel, best-effort.
+
+        Returns whether every channel succeeded. The per-run instant path
+        (the Notifier node) ignores this: one channel failing must never
+        fail the run. The digest job (ADR 0016) uses it to decide whether
+        a batch is actually delivered or should stay queued for retry.
+        """
+        all_ok = True
         for sink in self._sinks:
             try:
                 sink.send(draft)
             except Exception:
+                all_ok = False
                 logger.exception(
                     "notification delivery failed on %s for user %s",
                     type(sink).__name__,
                     draft.user_id,
                 )
+        return all_ok

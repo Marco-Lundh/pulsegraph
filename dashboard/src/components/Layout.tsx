@@ -6,6 +6,7 @@ import {
   Eye,
   LayoutDashboard,
   LogOut,
+  Settings,
   ShieldCheck,
   Zap,
 } from 'lucide-react';
@@ -17,6 +18,7 @@ const navItems = [
   { to: '/watches', icon: Eye, label: 'Watches' },
   { to: '/notifications', icon: Bell, label: 'Notifications' },
   { to: '/runs', icon: Activity, label: 'Runs' },
+  { to: '/settings', icon: Settings, label: 'Settings' },
 ];
 
 export function Layout() {
