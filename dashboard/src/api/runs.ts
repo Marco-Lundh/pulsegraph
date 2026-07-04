@@ -1,6 +1,6 @@
 import { api } from './client';
 
-export type RunStatus = 'pending' | 'running' | 'success' | 'failed';
+export type RunStatus = 'pending' | 'running' | 'succeeded' | 'failed';
 
 export interface RunOut {
   id: string;
@@ -12,6 +12,10 @@ export interface RunOut {
 }
 
 export const runsApi = {
+  list: (sinceIso?: string): Promise<RunOut[]> =>
+    api.get<RunOut[]>(
+      sinceIso ? `/runs?since=${encodeURIComponent(sinceIso)}` : '/runs'
+    ),
   listForWatch: (watchId: string): Promise<RunOut[]> =>
     api.get<RunOut[]>(`/runs?watch_id=${watchId}`),
 };
