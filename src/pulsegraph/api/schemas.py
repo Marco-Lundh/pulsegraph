@@ -175,7 +175,7 @@ class SourceHealthOut(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Admin: notification settings
+# Notification settings (per-user channel preferences)
 # ---------------------------------------------------------------------------
 
 
@@ -187,3 +187,9 @@ class NotificationSettingOut(BaseModel):
     is_active: bool
 
     model_config = {"from_attributes": True}
+
+
+class NotificationSettingUpdate(BaseModel):
+    frequency: NotificationFrequency = NotificationFrequency.INSTANT
+    destination: str | None = None
+    is_active: bool = True

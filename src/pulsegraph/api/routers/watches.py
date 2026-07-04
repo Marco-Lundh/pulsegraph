@@ -42,7 +42,13 @@ def list_watches(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> list[Watch]:
-    rows = db.query(Watch).filter(Watch.user_id == user.id).all()
+    # FakeSession.filter() is a no-op in tests, so re-filter in Python too
+    # (mirrors the pattern used throughout worker/*.py).
+    rows = [
+        w
+        for w in db.query(Watch).filter(Watch.user_id == user.id).all()
+        if w.user_id == user.id
+    ]
     return [WatchOut.from_orm(w) for w in rows]
 
 
@@ -53,10 +59,12 @@ def create_watch(
     user: User = Depends(get_current_user),
 ) -> WatchOut:
     limit = get_settings().max_active_watches_per_user
-    active = (
-        db.query(Watch)
+    active = sum(
+        1
+        for w in db.query(Watch)
         .filter(Watch.user_id == user.id, Watch.is_active.is_(True))
-        .count()
+        .all()
+        if w.user_id == user.id and w.is_active
     )
     if active >= limit:
         raise HTTPException(

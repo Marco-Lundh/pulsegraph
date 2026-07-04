@@ -85,6 +85,38 @@ def test_resolver_returns_none_without_setting() -> None:
     assert resolve(str(uuid.uuid4())) is None
 
 
+def test_resolver_does_not_leak_other_users_setting() -> None:
+    # FakeSession.filter() is a no-op, so the re-filter must also check
+    # user_id/channel/is_active, not just frequency — otherwise the first
+    # matching-frequency row in the whole store wins, leaking across users.
+    user_a = uuid.uuid4()
+    user_b_setting = NotificationSetting(
+        user_id=uuid.uuid4(),
+        channel=NotificationChannel.WEBHOOK,
+        destination="https://user-b.example/hook",
+        frequency=_INSTANT,
+        is_active=True,
+    )
+    user_a_setting = NotificationSetting(
+        user_id=user_a,
+        channel=NotificationChannel.EMAIL,
+        destination=None,
+        frequency=_INSTANT,
+        is_active=True,
+    )
+    user_a_account = User(
+        id=user_a,
+        email="user-a@example.com",
+        password_hash="x",
+        role=UserRole.USER,
+    )
+    db = FakeSession(user_b_setting, user_a_setting, user_a_account)
+
+    resolve = _destination_resolver(db, NotificationChannel.EMAIL, _INSTANT)
+
+    assert resolve(str(user_a)) == "user-a@example.com"
+
+
 def test_resolver_skips_setting_of_other_frequency() -> None:
     uid = uuid.uuid4()
     setting = NotificationSetting(

@@ -38,3 +38,11 @@ export function logout(): void {
 export async function getMe(): Promise<UserOut> {
   return api.get<UserOut>('/auth/me');
 }
+
+export async function exportMyData(): Promise<Record<string, unknown>> {
+  return api.get<Record<string, unknown>>('/auth/me/export');
+}
+
+export async function deleteMyAccount(): Promise<void> {
+  return api.delete<void>('/auth/me');
+}
