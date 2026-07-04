@@ -1,5 +1,6 @@
 """Tests for /auth/register and /auth/login."""
 
+import datetime
 import uuid
 
 from fastapi.testclient import TestClient
@@ -86,6 +87,23 @@ def test_login_unknown_email_returns_401() -> None:
         json={"email": "ghost@example.com", "password": "x"},
     )
     assert resp.status_code == 401
+
+
+# --- get current user ---
+
+
+def test_get_me_returns_current_user() -> None:
+    user = _existing_user()
+    user.created_at = datetime.datetime.now(datetime.UTC)
+    db = FakeSession(user)
+    client, _, _ = make_client(db=db, user=user)
+
+    resp = client.get("/auth/me")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["email"] == user.email
+    assert body["role"] == user.role
 
 
 # --- delete account (GDPR erasure) ---

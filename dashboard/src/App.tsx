@@ -2,6 +2,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from './contexts/AuthContext';
 import { ProtectedRoute } from './components/ProtectedRoute';
+import { AdminRoute } from './components/AdminRoute';
 import { Layout } from './components/Layout';
 import { LoginPage } from './pages/LoginPage';
 import { RegisterPage } from './pages/RegisterPage';
@@ -11,6 +12,11 @@ import { WatchDetailPage } from './pages/WatchDetailPage';
 import { CreateWatchPage } from './pages/CreateWatchPage';
 import { NotificationsPage } from './pages/NotificationsPage';
 import { RunsPage } from './pages/RunsPage';
+import { AdminLayout } from './pages/AdminLayout';
+import { AdminOpsPage } from './pages/AdminOpsPage';
+import { AdminSourceHealthPage } from './pages/AdminSourceHealthPage';
+import { AdminReviewQueuePage } from './pages/AdminReviewQueuePage';
+import { AdminUsersPage } from './pages/AdminUsersPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -34,6 +40,20 @@ export default function App() {
               <Route path="/watches/:id" element={<WatchDetailPage />} />
               <Route path="/notifications" element={<NotificationsPage />} />
               <Route path="/runs" element={<RunsPage />} />
+              <Route
+                path="/admin"
+                element={
+                  <AdminRoute>
+                    <AdminLayout />
+                  </AdminRoute>
+                }
+              >
+                <Route index element={<Navigate to="ops" replace />} />
+                <Route path="ops" element={<AdminOpsPage />} />
+                <Route path="source-health" element={<AdminSourceHealthPage />} />
+                <Route path="review-queue" element={<AdminReviewQueuePage />} />
+                <Route path="users" element={<AdminUsersPage />} />
+              </Route>
             </Route>
           </Routes>
         </BrowserRouter>

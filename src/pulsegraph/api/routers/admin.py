@@ -1,15 +1,18 @@
 """Admin-only endpoints (ADR 0020/0021)."""
 
+import datetime
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from pulsegraph.api.deps import get_db, require_admin
+from pulsegraph.api.eval_health import eval_health_summary
 from pulsegraph.api.health import operational_summary
 from pulsegraph.api.schemas import (
     ReviewDecisionCreate,
     SourceHealthOut,
+    UserOut,
 )
 from pulsegraph.config import get_settings
 from pulsegraph.db.models import (
@@ -49,11 +52,32 @@ def operational_status(
     return operational_summary(db, make_redis(settings.redis_url), settings)
 
 
+@router.get("/eval-health")
+def eval_health(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+) -> dict:
+    """Aggregate eval-quality signal for the dashboard (ADR 0006).
+
+    Distinct from ``/admin/ops`` (infrastructure health) — this reports
+    what fraction of analyses the Evaluator approved in the lookback
+    window, e.g. "94% approved in the last 24h".
+    """
+    return eval_health_summary(db, datetime.datetime.now(datetime.UTC))
+
+
 @router.get("/review-queue")
 def list_review_queue(
     db: Session = Depends(get_db),
     _: User = Depends(require_admin),
 ) -> list[dict]:
+    # A decided evaluation stays REVIEW forever (ADR 0012 — decisions
+    # feed the offline golden dataset, they don't retroactively resolve
+    # the live evaluation), so it must be excluded here explicitly or it
+    # would never leave the queue. FakeSession has no join support, so
+    # decided ids are fetched separately and diffed in Python — correct
+    # under both the fake and the real ORM.
+    decided_ids = {d.evaluation_id for d in db.query(ReviewDecision).all()}
     rows = (
         db.query(Evaluation)
         .filter(Evaluation.status == EvalStatus.REVIEW)
@@ -69,6 +93,7 @@ def list_review_queue(
             "evaluated_at": r.evaluated_at.isoformat(),
         }
         for r in rows
+        if r.status == EvalStatus.REVIEW and r.id not in decided_ids
     ]
 
 
@@ -115,6 +140,14 @@ def decide(
     db.commit()
     db.refresh(decision)
     return {"id": str(decision.id), "decision": decision.decision}
+
+
+@router.get("/users", response_model=list[UserOut])
+def list_users(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+) -> list[User]:
+    return db.query(User).order_by(User.created_at.desc()).all()
 
 
 @router.delete(
