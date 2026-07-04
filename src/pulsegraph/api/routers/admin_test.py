@@ -7,6 +7,7 @@ from pulsegraph.api._fake import FakeSession, _make_user, make_client
 from pulsegraph.db.models import (
     AuditLogEntry,
     Evaluation,
+    ReviewDecision,
     SourceHealth,
     User,
 )
@@ -16,6 +17,7 @@ from pulsegraph.domain.enums import (
     SourceStatus,
     UserRole,
 )
+from pulsegraph.domain.enums import ReviewDecision as ReviewDecisionEnum
 
 _NOW = datetime.datetime.now(datetime.UTC)
 
@@ -115,6 +117,27 @@ def test_admin_can_access_source_health() -> None:
     assert resp.json()[0]["source"] == "jobtech"
 
 
+# --- eval health ---
+
+
+def test_admin_eval_health_reports_pct_approved() -> None:
+    admin = _make_user(UserRole.ADMIN)
+    approved = _evaluation(EvalStatus.APPROVED)
+    db = FakeSession(admin, approved)
+    client, _, _ = make_client(db=db, user=admin)
+    resp = client.get("/admin/eval-health")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total"] == 1
+    assert body["pct_approved"] == 1.0
+
+
+def test_non_admin_cannot_access_eval_health() -> None:
+    client, _, _ = make_client()
+    resp = client.get("/admin/eval-health")
+    assert resp.status_code == 403
+
+
 # --- review queue ---
 
 
@@ -141,6 +164,25 @@ def test_admin_decide_records_decision() -> None:
     assert resp.json()["decision"] == "approved"
 
 
+def test_review_queue_excludes_already_decided_evaluations() -> None:
+    admin = _make_user(UserRole.ADMIN)
+    ev = _evaluation(EvalStatus.REVIEW)
+    decision = ReviewDecision(
+        id=uuid.uuid4(),
+        evaluation_id=ev.id,
+        reviewer_id=admin.id,
+        decision=ReviewDecisionEnum.APPROVED,
+        decided_at=_NOW,
+    )
+    db = FakeSession(admin, ev, decision)
+    client, _, _ = make_client(db=db, user=admin)
+
+    resp = client.get("/admin/review-queue")
+
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
 def test_admin_decide_unknown_evaluation_returns_404() -> None:
     admin = _make_user(UserRole.ADMIN)
     db = FakeSession(admin)
@@ -150,6 +192,30 @@ def test_admin_decide_unknown_evaluation_returns_404() -> None:
         json={"decision": "approved"},
     )
     assert resp.status_code == 404
+
+
+# --- list users ---
+
+
+def test_admin_can_list_users() -> None:
+    admin = _make_user(UserRole.ADMIN)
+    other = _make_user(UserRole.USER)
+    admin.created_at = _NOW
+    other.created_at = _NOW
+    db = FakeSession(admin, other)
+    client, _, _ = make_client(db=db, user=admin)
+
+    resp = client.get("/admin/users")
+
+    assert resp.status_code == 200
+    emails = {u["email"] for u in resp.json()}
+    assert emails == {admin.email, other.email}
+
+
+def test_non_admin_cannot_list_users() -> None:
+    client, _, _ = make_client()
+    resp = client.get("/admin/users")
+    assert resp.status_code == 403
 
 
 # --- delete user (GDPR erasure) ---
