@@ -78,12 +78,14 @@ def build_notification_sink(
     settings: Settings,
     db: Session,
     frequency: NotificationFrequency = NotificationFrequency.INSTANT,
-) -> NotificationSink:
+) -> MultiSink:
     """Build a ``MultiSink`` of the channels enabled in *settings*.
 
     Only users whose channel setting matches *frequency* are delivered to,
     so the same builder produces the instant sink (used per run) and the
-    digest sink (used by the daily digest job).
+    digest sink (used by the daily digest job). Typed as the concrete
+    ``MultiSink`` (not the ``NotificationSink`` protocol) so callers can
+    rely on ``send()``'s per-user success/failure return value (ADR 0016).
     """
     sinks: list[NotificationSink] = []
     if settings.email_enabled:

@@ -6,9 +6,16 @@ their notifications are persisted ``PENDING`` and this job batches them
 into a single periodic message, then marks them ``SENT``. Runs on the
 same scheduler as the pipeline (ADR 0015).
 
-Delivery is best-effort, like the instant path: ``MultiSink`` isolates a
-failing channel, and the dashboard ``Notification`` row stays as the
-durable record regardless of push outcome.
+Delivery is best-effort per channel, like the instant path: ``MultiSink``
+isolates a failing channel so one outage never blocks another. But
+unlike the instant path, this job also tracks whether the push actually
+reached the user: a user is only marked ``SENT`` when every one of their
+enabled channels succeeded. If any channel failed, their notifications
+stay ``PENDING`` so the next scheduled run retries them, instead of the
+push being silently lost. A user with two channels where only one is
+down may see an occasional duplicate on the channel that did succeed --
+that is a deliberate trade-off against ever losing a notification
+outright.
 """
 
 import datetime
@@ -69,10 +76,13 @@ def send_digests(
     *,
     now: datetime.datetime | None = None,
 ) -> dict:
-    """Batch and deliver every pending digest, marking rows ``SENT``.
+    """Batch and deliver every pending digest.
 
-    Returns counts of users and notifications digested. Commits its own
-    transaction.
+    A user's notifications are marked ``SENT`` only when their digest
+    push actually succeeds; a failed push leaves them ``PENDING`` for the
+    next run to retry (see the module docstring). Returns counts of
+    users, notifications digested, and users whose push failed this run.
+    Commits its own transaction.
     """
     now = now or datetime.datetime.now(datetime.UTC)
     pending = [
@@ -91,19 +101,27 @@ def send_digests(
         settings, db, NotificationFrequency.DAILY_DIGEST
     )
     digested = 0
+    failed_users = 0
     for user_id, notifications in by_user.items():
         summaries = []
         for notification in notifications:
             analysis = db.get(Analysis, notification.analysis_id)
             summaries.append(analysis.result if analysis else "(item)")
-        sink.send(build_digest_draft(str(user_id), summaries, now))
+        delivered = sink.send(build_digest_draft(str(user_id), summaries, now))
+        if not delivered:
+            failed_users += 1
+            continue
         for notification in notifications:
             notification.status = NotificationStatus.SENT
             notification.delivered_at = now
         digested += len(notifications)
 
     db.commit()
-    return {"users": len(by_user), "notifications": digested}
+    return {
+        "users": len(by_user),
+        "notifications": digested,
+        "failed_users": failed_users,
+    }
 
 
 async def run_digest(ctx: dict) -> dict:
