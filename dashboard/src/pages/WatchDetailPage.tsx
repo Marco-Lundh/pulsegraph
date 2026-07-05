@@ -221,8 +221,9 @@ export function WatchDetailPage() {
               {runs.map((run) => (
                 <tr
                   key={run.id}
+                  onClick={() => navigate(`/runs/${run.id}`)}
                   style={{ borderBottom: '1px solid var(--color-border)' }}
-                  className="last:border-0"
+                  className="cursor-pointer transition-colors last:border-0 hover:bg-[var(--color-bg-input)]"
                 >
                   <td className="px-4 py-3">
                     <StatusBadge status={run.status} />

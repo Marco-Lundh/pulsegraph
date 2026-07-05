@@ -1,10 +1,12 @@
 import { useQuery } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 import { Activity } from 'lucide-react';
 import { watchesApi } from '../api/watches';
 import { runsApi } from '../api/runs';
 import { StatusBadge } from '../components/StatusBadge';
 
 export function RunsPage() {
+  const navigate = useNavigate();
   const { data: watches } = useQuery({
     queryKey: ['watches'],
     queryFn: () => watchesApi.list(),
@@ -87,8 +89,9 @@ export function RunsPage() {
                 return (
                   <tr
                     key={run.id}
+                    onClick={() => navigate(`/runs/${run.id}`)}
                     style={{ borderBottom: '1px solid var(--color-border)' }}
-                    className="last:border-0"
+                    className="cursor-pointer transition-colors last:border-0 hover:bg-[var(--color-bg-input)]"
                   >
                     <td className="px-4 py-3">
                       <StatusBadge status={run.status} />

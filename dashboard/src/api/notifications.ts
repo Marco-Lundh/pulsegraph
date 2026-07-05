@@ -1,6 +1,6 @@
 import { api } from './client';
 
-export type NotificationChannel = 'email' | 'webhook' | 'in_app';
+export type NotificationChannel = 'dashboard' | 'email' | 'webhook';
 export type NotificationStatus = 'pending' | 'sent' | 'failed';
 
 export interface NotificationOut {

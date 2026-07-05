@@ -3,35 +3,11 @@
 Known follow-ups, deferred from their originating ADR. Add new
 decisions/ADRs above this line as they arise.
 
-The list is grouped by how visible the gap is: parity gaps a user or
-operator would notice, then robustness/hardening, then larger deferred
-work. Each item cites the ADR it traces to.
-
-## Backend ↔ UI parity
-
-- **Model used is not surfaced (ADR 0002).** `Analysis.model_used` (local
-  vs. Claude) is persisted but never exposed by an API or shown in the
-  dashboard. `RunOut` has no model field and `WatchDetailPage` shows only
-  run status/duration/error — a user cannot see which model analyzed an
-  item.
-
-- **LangSmith trace is not linked (ADR 0007).** `PipelineRun.langsmith_trace_id`
-  is stored but omitted from `RunOut` and never rendered, so the "error in
-  the dashboard → underlying trace" link the ADR calls for does not exist.
-
-- **No per-item eval view for end users (ADR 0006).** Only the admin-only
-  aggregate (`/admin/eval-health`) and the admin review queue surface eval
-  results; a regular user never sees per-item relevance/confidence/status.
-
-- **Dashboard notification-channel type mismatch (ADR 0016).**
-  `dashboard/src/api/notifications.ts` declares
-  `NotificationChannel = 'email' | 'webhook' | 'in_app'`, but the backend
-  value for dashboard notifications is `'dashboard'`; the `'in_app'`
-  literal never matches real data.
-
-- **Cost ledger is not surfaced (ADR 0008).** `cost_events` is now written
-  per analysis and included in the GDPR export, but there is no admin
-  per-user / per-run spend view over it yet.
+The list is grouped by how visible the gap is: robustness/hardening
+follow-ups, then larger deferred work. Each item cites the ADR it traces
+to. (The backend/UI parity gaps — Tier 2 — are now closed: model used and
+per-item eval on the run detail page, the LangSmith trace id on `RunOut`,
+the dashboard notification-channel type, and an admin cost-ledger view.)
 
 ## Robustness & hardening
 

@@ -6,6 +6,8 @@ import uuid
 from pydantic import BaseModel, EmailStr, field_validator
 
 from pulsegraph.domain.enums import (
+    EvalStatus,
+    ModelKind,
     NotificationChannel,
     NotificationFrequency,
     NotificationStatus,
@@ -126,10 +128,41 @@ class RunOut(BaseModel):
     watch_id: uuid.UUID
     status: RunStatus
     error: str | None
+    # The LangSmith root trace id (ADR 0007), surfaced so the dashboard can
+    # link a run — especially a failed one — back to its execution trace.
+    # None when tracing was disabled for the run (local-first default).
+    langsmith_trace_id: str | None
     started_at: datetime.datetime
     finished_at: datetime.datetime | None
 
     model_config = {"from_attributes": True}
+
+
+class ItemResultOut(BaseModel):
+    """One analyzed item in a run, with its analysis and evaluation.
+
+    Closes two backend/UI parity gaps: which model analyzed the item
+    (``model_used``/``model_version``, ADR 0002) and how the Evaluator
+    graded it (``relevance_score``/``eval_confidence``/``eval_status``,
+    ADR 0006) — neither was ever exposed to end users. ``notified`` says
+    whether the item produced a dashboard notification this run.
+
+    Evaluation fields are optional so an analysis awaiting its grade still
+    renders; every persisted item always carries exactly one analysis.
+    """
+
+    item_id: uuid.UUID
+    external_id: str | None
+    source: SourceKind
+    fetched_at: datetime.datetime
+    model_used: ModelKind
+    model_version: str
+    summary: str
+    analysis_confidence: float
+    relevance_score: float | None
+    eval_confidence: float | None
+    eval_status: EvalStatus | None
+    notified: bool
 
 
 # ---------------------------------------------------------------------------

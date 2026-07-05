@@ -4,6 +4,7 @@ const tabs = [
   { to: 'ops', label: 'Ops' },
   { to: 'source-health', label: 'Source health' },
   { to: 'review-queue', label: 'Review queue' },
+  { to: 'costs', label: 'Costs' },
   { to: 'users', label: 'Users' },
 ];
 
@@ -17,7 +18,7 @@ export function AdminLayout() {
         Admin
       </h1>
       <p className="mb-6 text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-        Operational health, review queue, and user management.
+        Operational health, review queue, spend, and user management.
       </p>
 
       <div

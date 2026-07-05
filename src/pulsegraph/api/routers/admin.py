@@ -6,6 +6,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from pulsegraph.api.costs import cost_summary
 from pulsegraph.api.deps import get_db, require_admin
 from pulsegraph.api.eval_health import eval_health_summary
 from pulsegraph.api.health import operational_summary
@@ -95,6 +96,21 @@ def eval_health(
     window, e.g. "94% approved in the last 24h".
     """
     return eval_health_summary(db, datetime.datetime.now(datetime.UTC))
+
+
+@router.get("/costs")
+def cost_ledger(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+) -> dict:
+    """Per-user cloud-model spend from the cost ledger (ADR 0008).
+
+    Rolls up ``cost_events`` (tokens + USD per model call) into a per-user
+    breakdown over a lookback window, so an admin can see who is driving
+    spend — distinct from ``/admin/ops``, which reports only the aggregate
+    monthly spend vs the cap.
+    """
+    return cost_summary(db, datetime.datetime.now(datetime.UTC))
 
 
 @router.get("/review-queue")
