@@ -3,11 +3,6 @@
 Known follow-ups, deferred from their originating ADR. Add new
 decisions/ADRs above this line as they arise.
 
-- **Operator alerts have no throttle/dedup (ADR 0020).** `worker/alerts.py`
-  re-sends every firing alert on each 15-minute sweep for as long as the
-  condition persists (e.g. a worker that stays down triggers a fresh
-  alert every 15 minutes indefinitely, not just once).
-
 - **Offline eval harness (ADR 0012) not yet run against the real model.**
   The golden datasets and CI gate (`scripts/offline_eval.py`) only
   exercise the offline/keyword predictor. Running the harness against

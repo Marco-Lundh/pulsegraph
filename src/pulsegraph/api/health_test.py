@@ -7,6 +7,7 @@ import fakeredis
 
 from pulsegraph.api._fake import FakeSession
 from pulsegraph.api.health import (
+    ALERT_KINDS,
     CheckResult,
     check_database,
     check_ollama,
@@ -281,12 +282,50 @@ def test_collect_alerts_flags_each_signal() -> None:
         latency={"p95_seconds": 900.0, "slow": True},
     )
     alerts = collect_alerts(summary)
-    joined = " ".join(alerts)
+    joined = " ".join(a.message for a in alerts)
     assert "cost cap reached" in joined
     assert "no worker" in joined
     assert "backlog" in joined
     assert "paused" in joined
     assert "slow runs" in joined
+    assert {a.kind for a in alerts} == {
+        "spend_over_cap",
+        "worker_down",
+        "queue_backlog",
+        "sources_paused",
+        "slow_runs",
+    }
+
+
+def test_alert_kinds_covers_every_kind_collect_alerts_can_emit() -> None:
+    # ALERT_KINDS is what worker.alerts iterates to clear a resolved
+    # kind's cooldown window; if it ever drifts out of sync with the
+    # kinds collect_alerts actually emits, that clearing silently stops
+    # working for the missing kind. over_cap wins over near_cap (elif),
+    # so a second summary exercises near_cap on its own.
+    over_cap_summary = _summary(
+        spend={
+            "spend_usd": 11.0,
+            "ratio": 1.1,
+            "near_cap": True,
+            "over_cap": True,
+        },
+        queue={"depth": 200, "worker_down": True, "backlog": True},
+        sources={"paused": ["jobtech"], "alert": True},
+        latency={"p95_seconds": 900.0, "slow": True},
+    )
+    near_cap_summary = _summary(
+        spend={
+            "spend_usd": 5.0,
+            "ratio": 0.85,
+            "near_cap": True,
+            "over_cap": False,
+        }
+    )
+    emitted_kinds = {a.kind for a in collect_alerts(over_cap_summary)} | {
+        a.kind for a in collect_alerts(near_cap_summary)
+    }
+    assert emitted_kinds == set(ALERT_KINDS)
 
 
 # --- operational_summary ---
