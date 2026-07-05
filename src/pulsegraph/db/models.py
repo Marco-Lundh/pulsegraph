@@ -75,6 +75,12 @@ class User(Base):
         nullable=False,
         server_default=text("'user'"),
     )
+    # When the user granted consent / lawful basis for processing, recorded
+    # at signup (GDPR, ADR 0018). Nullable so pre-existing accounts (created
+    # before consent was captured) read as null rather than a false value.
+    consented_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
     created_at: Mapped[datetime.datetime] = _created_at()
 
 

@@ -10,6 +10,12 @@ from functools import lru_cache
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# The built-in JWT secret. Fine locally; rejected in any non-local env by
+# ``Settings.validate_production_secrets`` (ADR 0009/0021).
+_DEFAULT_JWT_SECRET = "dev-secret-change-in-prod"
+# HMAC-SHA256's recommended minimum key length (RFC 7518 §3.2).
+_MIN_JWT_SECRET_BYTES = 32
+
 
 class Settings(BaseSettings):
     """Typed configuration sourced from environment variables."""
@@ -65,7 +71,7 @@ class Settings(BaseSettings):
     )
 
     jwt_secret_key: str = Field(
-        default="dev-secret-change-in-prod", alias="JWT_SECRET_KEY"
+        default=_DEFAULT_JWT_SECRET, alias="JWT_SECRET_KEY"
     )
     jwt_expire_hours: int = Field(default=24, alias="JWT_EXPIRE_HOURS")
 
@@ -96,12 +102,24 @@ class Settings(BaseSettings):
         default=False, alias="USE_RECORDED_FIXTURES"
     )
 
+    # Brute-force protection for the auth endpoints (ADR 0021). Each of
+    # login and register allows this many attempts per window, per client
+    # IP, before returning 429; the two actions have independent budgets.
+    auth_rate_limit: int = Field(default=10, alias="AUTH_RATE_LIMIT")
+    auth_rate_window_seconds: int = Field(
+        default=300, alias="AUTH_RATE_WINDOW_SECONDS"
+    )
+
     max_active_watches_per_user: int = Field(
         default=20, alias="MAX_ACTIVE_WATCHES_PER_USER"
     )
     max_runs_per_hour_per_user: int = Field(
         default=60, alias="MAX_RUNS_PER_HOUR_PER_USER"
     )
+    # Worker retry policy (ADR 0015): how many times arq attempts a watch's
+    # job before giving up. On the final failed attempt the watch is
+    # deactivated so a permanently broken watch stops being scheduled.
+    worker_max_tries: int = Field(default=3, alias="WORKER_MAX_TRIES")
     monthly_cost_cap_usd: float = Field(
         default=10.0, alias="MONTHLY_COST_CAP_USD"
     )
@@ -160,6 +178,33 @@ class Settings(BaseSettings):
         Analyzer can fall back to the local model instead of failing.
         """
         return self.use_cloud_model and bool(self.anthropic_api_key)
+
+    def validate_production_secrets(self) -> None:
+        """Fail fast if a non-local deployment still uses dev secrets.
+
+        In any environment other than ``local`` the JWT signing key must be
+        overridden from its built-in dev default and be at least 32 bytes
+        (the HMAC-SHA256 minimum, RFC 7518 §3.2). A no-op locally so the
+        local-first defaults keep working with no configuration (ADR
+        0009/0021). Called at API and worker startup so a misconfigured
+        production process refuses to start rather than signing tokens with
+        a publicly known key.
+        """
+        if self.env == "local":
+            return
+        problems: list[str] = []
+        if self.jwt_secret_key == _DEFAULT_JWT_SECRET:
+            problems.append("JWT_SECRET_KEY is still the built-in dev default")
+        elif len(self.jwt_secret_key.encode()) < _MIN_JWT_SECRET_BYTES:
+            problems.append(
+                "JWT_SECRET_KEY must be at least "
+                f"{_MIN_JWT_SECRET_BYTES} bytes"
+            )
+        if problems:
+            raise RuntimeError(
+                f"Insecure configuration for PULSEGRAPH_ENV={self.env!r}: "
+                + "; ".join(problems)
+            )
 
     @property
     def langsmith_active(self) -> bool:

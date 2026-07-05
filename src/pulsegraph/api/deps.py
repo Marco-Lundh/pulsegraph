@@ -3,6 +3,7 @@
 from collections.abc import Generator
 
 import jwt
+import redis as redis_lib
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import create_engine
@@ -11,11 +12,25 @@ from sqlalchemy.orm import Session, sessionmaker
 from pulsegraph.api.auth import decode_token
 from pulsegraph.config import get_settings
 from pulsegraph.db.models import User
+from pulsegraph.redis_client import make_redis
 
 _bearer = HTTPBearer()
 
 _engine = None
 _SessionLocal = None
+_redis: redis_lib.Redis | None = None
+
+
+def get_redis() -> redis_lib.Redis:
+    """Return a process-wide Redis client (ADR 0021/0022).
+
+    Used by the auth endpoints for IP-based rate limiting. Overridden in
+    tests with an in-memory fake so unit tests need no live Redis.
+    """
+    global _redis
+    if _redis is None:
+        _redis = make_redis(get_settings().redis_url)
+    return _redis
 
 
 def get_db() -> Generator[Session, None, None]:

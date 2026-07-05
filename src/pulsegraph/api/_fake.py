@@ -6,11 +6,12 @@ from collections.abc import Generator
 from contextlib import nullcontext
 from typing import Any
 
+import fakeredis
 from fastapi.testclient import TestClient
 
 from pulsegraph.api.app import create_app
 from pulsegraph.api.auth import create_token
-from pulsegraph.api.deps import get_current_user, get_db
+from pulsegraph.api.deps import get_current_user, get_db, get_redis
 from pulsegraph.db.models import User
 from pulsegraph.domain.enums import UserRole
 
@@ -151,6 +152,11 @@ def make_client(
     def _fake_user() -> User:
         return _user
 
+    # A fresh in-memory Redis per client so IP-based auth rate limiting
+    # (ADR 0021) runs for real in tests without needing a live server.
+    fake_redis = fakeredis.FakeRedis(decode_responses=True)
+
     app.dependency_overrides[get_db] = _fake_db
     app.dependency_overrides[get_current_user] = _fake_user
+    app.dependency_overrides[get_redis] = lambda: fake_redis
     return TestClient(app), _user, token

@@ -10,9 +10,14 @@ from pulsegraph.api.routers import (
     runs,
     watches,
 )
+from pulsegraph.config import get_settings
 
 
 def create_app() -> FastAPI:
+    # Refuse to start a non-local deployment configured with the dev JWT
+    # secret (ADR 0009/0021); a no-op locally.
+    get_settings().validate_production_secrets()
+
     app = FastAPI(
         title="PulseGraph",
         description="Multi-tenant agent-orchestration API",

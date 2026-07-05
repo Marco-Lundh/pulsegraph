@@ -79,11 +79,18 @@ class OllamaModelClient:
         the Analyzer can fall back to the cloud model (ADR 0002).
         """
         try:
+            # Instruction/data separation (ADR 0013): the analyzer
+            # instruction is the system turn; the untrusted item is a
+            # distinct user turn, never concatenated into the instruction,
+            # mirroring the Claude client's system/user split.
             response = httpx.post(
-                f"{self._base_url}/api/generate",
+                f"{self._base_url}/api/chat",
                 json={
                     "model": self._model,
-                    "prompt": ANALYZER_TEMPLATE.format(content=content),
+                    "messages": [
+                        {"role": "system", "content": ANALYZER_TEMPLATE},
+                        {"role": "user", "content": content},
+                    ],
                     "format": "json",
                     "stream": False,
                 },
@@ -93,7 +100,7 @@ class OllamaModelClient:
             raise TimeoutError("ollama analysis timed out") from exc
         response.raise_for_status()
         body = response.json()
-        payload = json.loads(body["response"])
+        payload = json.loads(body["message"]["content"])
         labels = payload.get("labels") or []
         return AnalysisResult(
             summary=str(payload.get("summary", "")) or "(empty)",

@@ -3,36 +3,36 @@
 Known follow-ups, deferred from their originating ADR. Add new
 decisions/ADRs above this line as they arise.
 
-The list is grouped by how visible the gap is: robustness/hardening
-follow-ups, then larger deferred work. Each item cites the ADR it traces
-to. (The backend/UI parity gaps — Tier 2 — are now closed: model used and
-per-item eval on the run detail page, the LangSmith trace id on `RunOut`,
-the dashboard notification-channel type, and an admin cost-ledger view.)
+The list is grouped by how visible the gap is: the robustness/hardening
+follow-ups still open, then larger deferred work. Each item cites the ADR
+it traces to. (Backend/UI parity — Tier 2 — is closed. The Tier 3
+hardening subset is also done: worker retry/backoff + auto-deactivate of a
+permanently failing watch (ADR 0015), auth-endpoint rate limiting (ADR
+0021), LLM injection hardening — marker neutralization + Ollama
+instruction/data separation (ADR 0013), automatic drift re-probe /
+auto-resume (ADR 0010), production JWT-secret validation (ADR 0009/0021),
+and GDPR consent captured at signup (ADR 0018). What remains below is the
+harder-scoped work.)
 
 ## Robustness & hardening
-
-- **No worker retry/backoff (ADR 0015).** `WorkerSettings` sets no
-  `max_tries`/retry/backoff, and a permanently failing watch is marked
-  FAILED but never paused/deactivated. The per-user hourly rate limit is
-  also enforced inside the task rather than at enqueue time.
 
 - **Instant delivery is fire-and-forget (ADR 0016).** Only the digest path
   tracks per-notification status and retries. Instant email/webhook sends
   log failures but write no per-channel `Notification` row, status, or
-  retry (only the dashboard channel gets a row).
+  retry — only the dashboard channel gets a row. This is architectural, not
+  a quick fix: the `notifications` unique constraint is `(user_id,
+  dedup_key)` (one row per item, ADR 0016), so per-channel rows require
+  adding `channel` to that constraint and reworking the dedup/digest
+  idempotency that assumes a single row per item. Track with the other
+  architectural follow-ups (0014 / 0001 / 0011).
 
-- **LLM input hardening is partial (ADR 0013).** `sanitize_text` strips
-  control chars and caps length but does not neutralize known injection
-  markers, and the Ollama client concatenates untrusted content into the
-  prompt string rather than using role-tagged instruction/data separation
-  (the Claude client does separate system/user).
-
-- **Auth endpoints are not rate-limited (ADR 0021).** `login`/`register`
-  have no brute-force protection; `check_rate` is used only by the worker.
-
-- **GDPR gaps (ADR 0018).** Consent / lawful basis is not recorded at
-  signup (no field on `User`), and erasure/retention never touches
-  external LangSmith traces — only `Item` and `PipelineRun` are purged.
+- **LangSmith traces are not purged on erasure/retention (ADR 0018).**
+  Consent at signup is now recorded, but a purged run's external LangSmith
+  trace (`langsmith_trace_id`) is not deleted: the LangSmith SDK exposes no
+  per-run delete API (only whole-project deletion), so trace lifetime is
+  governed by LangSmith's own retention config. Tracing is off by default
+  (local-first), so nothing leaves the machine unless explicitly enabled.
+  Revisit if/when the SDK gains per-run deletion.
 
 - **Embedding version safety is incomplete (ADR 0014).** `embedding_model`
   is recorded per item, but there is no re-embedding migration/job, the
@@ -49,16 +49,6 @@ the dashboard notification-channel type, and an admin cost-ledger view.)
   model clients still hold their prompt text in code rather than loading
   the active template from the registry at runtime, and there is no CRUD /
   admin surface for editing or versioning prompts.
-
-- **Drift recovery is manual (ADR 0010).** A source paused for schema
-  drift is resumed only by the admin `POST /admin/source-health/{source}/resume`
-  action (or a plugin fix); there is no automatic health re-probe that
-  clears the pause once the upstream schema returns.
-
-- **Short/default secrets are not validated for prod (ADR 0009/0021).**
-  `JWT_SECRET_KEY` defaults to `"dev-secret-change-in-prod"` (25 bytes,
-  below the 32-byte HMAC-SHA256 recommendation) with no startup check that
-  a real secret is set when `PULSEGRAPH_ENV != "local"`.
 
 ## Larger deferred work
 
