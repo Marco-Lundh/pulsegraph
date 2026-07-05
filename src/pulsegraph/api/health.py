@@ -9,7 +9,7 @@ readiness probe is testable without real infrastructure.
 import datetime
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, NamedTuple, Protocol
 
 import httpx
 from arq.constants import default_queue_name, health_check_key_suffix
@@ -214,7 +214,33 @@ def operational_summary(db: Any, redis: Any, settings: Settings) -> dict:
     }
 
 
-def collect_alerts(summary: dict) -> list[str]:
+class AlertSignal(NamedTuple):
+    """One firing operator alert.
+
+    ``kind`` is a stable identifier independent of the interpolated
+    numbers in ``message`` (e.g. queue depth), so a throttle/dedup layer
+    (``worker.alerts``, ADR 0020) can recognize "the same condition" run
+    to run even though its message text changes.
+    """
+
+    kind: str
+    message: str
+
+
+# Every kind ``collect_alerts`` can produce. A throttle layer iterates
+# this to know which cooldown windows to clear when a kind stops firing
+# (ADR 0020) — keep in sync with the ``alerts.append`` calls below.
+ALERT_KINDS = (
+    "spend_over_cap",
+    "spend_near_cap",
+    "worker_down",
+    "queue_backlog",
+    "sources_paused",
+    "slow_runs",
+)
+
+
+def collect_alerts(summary: dict) -> list[AlertSignal]:
     """Extract the currently-firing operator alerts from a summary.
 
     Empty when nothing is wrong — the alert job sends only when this is
@@ -223,20 +249,44 @@ def collect_alerts(summary: dict) -> list[str]:
     alerts = []
     spend = summary["spend"]
     if spend["over_cap"]:
-        alerts.append(f"cost cap reached: ${spend['spend_usd']}")
+        alerts.append(
+            AlertSignal(
+                "spend_over_cap", f"cost cap reached: ${spend['spend_usd']}"
+            )
+        )
     elif spend["near_cap"]:
-        alerts.append(f"spend near cap: {spend['ratio']:.0%} of the cap")
+        alerts.append(
+            AlertSignal(
+                "spend_near_cap",
+                f"spend near cap: {spend['ratio']:.0%} of the cap",
+            )
+        )
 
     queue = summary["queue"]
     if queue["worker_down"]:
-        alerts.append("no worker is draining the queue")
+        alerts.append(
+            AlertSignal("worker_down", "no worker is draining the queue")
+        )
     if queue["backlog"]:
-        alerts.append(f"queue backlog: {queue['depth']} jobs")
+        alerts.append(
+            AlertSignal(
+                "queue_backlog", f"queue backlog: {queue['depth']} jobs"
+            )
+        )
 
     if summary["sources"]["alert"]:
         paused = ", ".join(summary["sources"]["paused"])
-        alerts.append(f"sources paused for drift: {paused}")
+        alerts.append(
+            AlertSignal(
+                "sources_paused", f"sources paused for drift: {paused}"
+            )
+        )
 
     if summary["latency"]["slow"]:
-        alerts.append(f"slow runs: p95 {summary['latency']['p95_seconds']}s")
+        alerts.append(
+            AlertSignal(
+                "slow_runs",
+                f"slow runs: p95 {summary['latency']['p95_seconds']}s",
+            )
+        )
     return alerts

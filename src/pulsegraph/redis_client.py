@@ -60,3 +60,27 @@ def get_monthly_cost(r: redis_lib.Redis) -> float:
 def _cost_key() -> str:
     month = datetime.datetime.now(datetime.UTC).strftime("%Y-%m")
     return f"cost:claude:{month}"
+
+
+def should_send_alert(
+    r: redis_lib.Redis, kind: str, cooldown_seconds: int
+) -> bool:
+    """Atomically check-and-start an alert kind's cooldown window.
+
+    Returns True only the first time *kind* is seen within the cooldown
+    window, so a persisting condition (ADR 0020, e.g. a worker that stays
+    down) is reported once per window instead of on every sweep. Uses
+    ``SET ... NX EX`` so concurrent workers never both send for the same
+    window.
+    """
+    return bool(r.set(f"alert:{kind}", "1", nx=True, ex=cooldown_seconds))
+
+
+def clear_alert(r: redis_lib.Redis, kind: str) -> None:
+    """Reset *kind*'s cooldown window.
+
+    Called once a kind stops firing, so a resolved-then-recurring
+    incident is treated as new and alerts immediately, instead of being
+    silently swallowed by a cooldown left over from the prior incident.
+    """
+    r.delete(f"alert:{kind}")

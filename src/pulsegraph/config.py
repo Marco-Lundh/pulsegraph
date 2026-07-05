@@ -124,6 +124,13 @@ class Settings(BaseSettings):
     operator_webhook_secret: str = Field(
         default="", alias="OPERATOR_WEBHOOK_SECRET"
     )
+    # Alert throttle/dedup (ADR 0020): once a given alert kind (worker
+    # down, queue backlog, ...) has been pushed to the operator webhook,
+    # suppress repeats of that same kind for this many seconds instead of
+    # re-sending on every 15-minute sweep the condition stays firing.
+    alert_throttle_seconds: int = Field(
+        default=3600, alias="ALERT_THROTTLE_SECONDS"
+    )
     fetch_cache_ttl_seconds: int = Field(
         default=900, alias="FETCH_CACHE_TTL_SECONDS"
     )
