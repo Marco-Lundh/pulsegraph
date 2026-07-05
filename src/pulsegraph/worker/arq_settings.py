@@ -20,6 +20,7 @@ from pulsegraph.sources.jobtech import JobTechPlugin
 from pulsegraph.sources.riksdagen import RiksdagenPlugin
 from pulsegraph.worker.alerts import run_alerts
 from pulsegraph.worker.digest import run_digest
+from pulsegraph.worker.drift import run_drift_recheck
 from pulsegraph.worker.retention import run_retention
 from pulsegraph.worker.scheduler import enqueue_due_watches
 from pulsegraph.worker.tasks import run_watch
@@ -72,6 +73,9 @@ def _build_pipeline_deps(settings) -> PipelineDeps:
 
 async def startup(ctx: dict) -> None:
     settings = get_settings()
+    # Refuse to start a non-local worker configured with the dev JWT secret
+    # (ADR 0009/0021); a no-op locally.
+    settings.validate_production_secrets()
     # Turn on LangSmith tracing for the worker process when configured
     # (ADR 0007); a no-op under the local-first default.
     configure_tracing(settings)
@@ -92,6 +96,9 @@ async def shutdown(ctx: dict) -> None:
 
 class WorkerSettings:
     functions = [run_watch]
+    # Retry a failed job with arq's built-in backoff, up to this many
+    # attempts, before ``run_watch`` deactivates the watch (ADR 0015).
+    max_tries = get_settings().worker_max_tries
     cron_jobs = [
         cron(
             enqueue_due_watches,
@@ -103,6 +110,8 @@ class WorkerSettings:
         cron(run_digest, hour=6, minute=0),
         # Operator alert sweep, every 15 minutes (ADR 0020).
         cron(run_alerts, minute={0, 15, 30, 45}),
+        # Auto-resume drift-paused sources that recovered, hourly (ADR 0010).
+        cron(run_drift_recheck, minute=30),
     ]
     on_startup = startup
     on_shutdown = shutdown

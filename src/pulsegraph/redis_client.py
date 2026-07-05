@@ -28,6 +28,25 @@ def check_rate(r: redis_lib.Redis, user_id: uuid.UUID, limit: int) -> bool:
     return count <= limit
 
 
+def check_fixed_window(
+    r: redis_lib.Redis, key: str, limit: int, window_seconds: int
+) -> bool:
+    """Return True if *key* is within *limit* for the current window.
+
+    A generic fixed-window counter: atomically increments a per-window
+    counter under ``{key}:{window}`` and gives it a TTL so it expires on
+    its own. Used to brute-force-protect the auth endpoints keyed on the
+    caller's IP (ADR 0021); ``check_rate`` is the per-user hourly variant.
+    """
+    now = datetime.datetime.now(datetime.UTC)
+    window = int(now.timestamp()) // window_seconds
+    full_key = f"{key}:{window}"
+    count = r.incr(full_key)
+    if count == 1:
+        r.expire(full_key, window_seconds)
+    return count <= limit
+
+
 def get_fetch_cache(r: redis_lib.Redis, key: str) -> list | None:
     """Return the cached fetch result for *key*, or None on a miss."""
     raw = r.get(key)

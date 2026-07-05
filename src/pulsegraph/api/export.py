@@ -136,6 +136,7 @@ def export_user_data(db: Session, user: User) -> dict[str, Any]:
             "id": str(user.id),
             "email": user.email,
             "role": user.role,
+            "consented_at": _iso(user.consented_at),
             "created_at": _iso(user.created_at),
         },
         "watches": [_watch(w) for w in _owned(db, Watch, user.id)],

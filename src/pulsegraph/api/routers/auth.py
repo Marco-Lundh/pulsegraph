@@ -1,6 +1,10 @@
 """Auth endpoints: register and login (ADR 0005/0021)."""
 
-from fastapi import APIRouter, Depends, HTTPException, status
+import datetime
+import logging
+
+import redis as redis_lib
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from pulsegraph.api.auth import (
@@ -8,7 +12,7 @@ from pulsegraph.api.auth import (
     hash_password,
     verify_password,
 )
-from pulsegraph.api.deps import get_current_user, get_db
+from pulsegraph.api.deps import get_current_user, get_db, get_redis
 from pulsegraph.api.export import export_user_data
 from pulsegraph.api.schemas import (
     LoginRequest,
@@ -16,10 +20,62 @@ from pulsegraph.api.schemas import (
     TokenResponse,
     UserOut,
 )
+from pulsegraph.config import get_settings
 from pulsegraph.db.models import AuditLogEntry, User
 from pulsegraph.domain.enums import UserRole
+from pulsegraph.redis_client import check_fixed_window
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+def _client_ip(request: Request) -> str:
+    """Return the caller's IP for rate-limit keying (ADR 0021).
+
+    Uses the direct connection's address, which is not spoofable via an
+    ``X-Forwarded-For`` header. NOTE: behind a reverse proxy this is the
+    proxy's address, which would collapse every client into one bucket, so
+    a proxied deployment MUST run uvicorn with ``--forwarded-allow-ips`` (or
+    an equivalent trusted-proxy middleware) so ``request.client.host`` is
+    the real client IP before this limiter is relied on.
+    """
+    return request.client.host if request.client else "unknown"
+
+
+def _enforce_auth_rate(
+    r: redis_lib.Redis, request: Request, action: str
+) -> None:
+    """Brute-force-guard an auth action, keyed on the caller's IP (ADR 0021).
+
+    Raises 429 once more than ``auth_rate_limit`` attempts for this action
+    come from the same IP inside the window. login and register carry
+    independent budgets (distinct keys). Fails open: if the Redis check
+    errors (e.g. an outage) the request is allowed rather than 500'd, so a
+    Redis problem degrades brute-force protection instead of taking down
+    authentication entirely.
+    """
+    settings = get_settings()
+    key = f"authrate:{action}:{_client_ip(request)}"
+    try:
+        within = check_fixed_window(
+            r,
+            key,
+            settings.auth_rate_limit,
+            settings.auth_rate_window_seconds,
+        )
+    except Exception:
+        logger.warning(
+            "auth rate-limit check unavailable; allowing %s",
+            action,
+            exc_info=True,
+        )
+        return
+    if not within:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many attempts; try again later",
+        )
 
 
 def _audit(
@@ -45,7 +101,13 @@ def _audit(
     response_model=UserOut,
     status_code=status.HTTP_201_CREATED,
 )
-def register(body: RegisterRequest, db: Session = Depends(get_db)) -> User:
+def register(
+    body: RegisterRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    r: redis_lib.Redis = Depends(get_redis),
+) -> User:
+    _enforce_auth_rate(r, request, "register")
     # FakeSession.filter() is a no-op in tests, so re-match in Python too
     # (mirrors the pattern used throughout worker/*.py and api/export.py).
     existing = next(
@@ -65,6 +127,8 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)) -> User:
         email=body.email,
         password_hash=hash_password(body.password),
         role=UserRole.USER,
+        # Record consent / lawful basis at signup (GDPR, ADR 0018).
+        consented_at=datetime.datetime.now(datetime.UTC),
     )
     db.add(user)
     db.flush()
@@ -75,7 +139,13 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)) -> User:
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(body: LoginRequest, db: Session = Depends(get_db)) -> dict:
+def login(
+    body: LoginRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    r: redis_lib.Redis = Depends(get_redis),
+) -> dict:
+    _enforce_auth_rate(r, request, "login")
     user = next(
         (
             u

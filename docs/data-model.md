@@ -40,6 +40,7 @@ erDiagram
         text email UK
         text password_hash
         user_role role
+        timestamptz consented_at
         timestamptz created_at
     }
 
@@ -255,6 +256,7 @@ CREATE TABLE users (
     email         text NOT NULL UNIQUE,
     password_hash text NOT NULL,
     role          user_role NOT NULL DEFAULT 'user',
+    consented_at  timestamptz,  -- GDPR consent captured at signup (ADR 0018)
     created_at    timestamptz NOT NULL DEFAULT now()
 );
 

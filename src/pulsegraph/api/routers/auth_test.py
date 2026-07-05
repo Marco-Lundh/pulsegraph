@@ -3,12 +3,13 @@
 import datetime
 import uuid
 
+import fakeredis
 from fastapi.testclient import TestClient
 
 from pulsegraph.api._fake import FakeSession, make_client
 from pulsegraph.api.app import create_app
 from pulsegraph.api.auth import decode_token, hash_password
-from pulsegraph.api.deps import get_db
+from pulsegraph.api.deps import get_db, get_redis
 from pulsegraph.db.models import AuditLogEntry, User
 from pulsegraph.domain.enums import UserRole
 
@@ -16,6 +17,10 @@ from pulsegraph.domain.enums import UserRole
 def _client(db: FakeSession) -> TestClient:
     app = create_app()
     app.dependency_overrides[get_db] = lambda: (yield db)
+    # A fresh in-memory Redis so the auth rate limiter (ADR 0021) runs
+    # without a live server; a per-client counter keeps tests independent.
+    fake_redis = fakeredis.FakeRedis(decode_responses=True)
+    app.dependency_overrides[get_redis] = lambda: fake_redis
     return TestClient(app)
 
 
@@ -42,6 +47,18 @@ def test_register_creates_user() -> None:
     assert body["email"] == "new@example.com"
     assert body["role"] == "user"
     assert "id" in body
+
+
+def test_register_records_consent_timestamp() -> None:
+    # GDPR (ADR 0018): consent / lawful basis is captured at signup.
+    db = FakeSession()
+    resp = _client(db).post(
+        "/auth/register",
+        json={"email": "consent@example.com", "password": "pw123"},
+    )
+    assert resp.status_code == 201
+    user = db.query(User).all()[0]
+    assert user.consented_at is not None
 
 
 def test_register_duplicate_email_returns_409() -> None:
@@ -115,6 +132,61 @@ def test_login_matches_correct_user_among_several() -> None:
     )
     assert resp.status_code == 200
     assert decode_token(resp.json()["access_token"]) == second.id
+
+
+# --- rate limiting (ADR 0021) ---
+
+
+def test_login_rate_limited_after_burst() -> None:
+    # Default limit is 10 attempts per window per IP; the 11th is refused.
+    user = _existing_user()
+    client = _client(FakeSession(user))
+
+    last = None
+    for _ in range(11):
+        last = client.post(
+            "/auth/login",
+            json={"email": user.email, "password": "wrong"},
+        )
+
+    # The first 10 are the normal 401; the burst then trips the limiter.
+    assert last.status_code == 429
+
+
+def test_register_rate_limited_after_burst() -> None:
+    client = _client(FakeSession())
+
+    last = None
+    for i in range(11):
+        last = client.post(
+            "/auth/register",
+            json={"email": f"user{i}@example.com", "password": "pw123"},
+        )
+
+    assert last.status_code == 429
+
+
+def test_login_fails_open_when_redis_unavailable() -> None:
+    # A Redis outage must not take down auth: the rate-limit check fails
+    # open, so a wrong-password login still returns its normal 401 (not 500).
+    class _BrokenRedis:
+        def incr(self, *args, **kwargs):
+            raise ConnectionError("redis down")
+
+        def expire(self, *args, **kwargs):  # pragma: no cover
+            pass
+
+    user = _existing_user()
+    app = create_app()
+    db = FakeSession(user)
+    app.dependency_overrides[get_db] = lambda: (yield db)
+    app.dependency_overrides[get_redis] = lambda: _BrokenRedis()
+    resp = TestClient(app).post(
+        "/auth/login",
+        json={"email": user.email, "password": "wrong"},
+    )
+
+    assert resp.status_code == 401
 
 
 # --- get current user ---

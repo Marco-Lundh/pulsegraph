@@ -7,6 +7,13 @@ ON DELETE CASCADE; deleting a ``PipelineRun`` removes the run trace while
 leaving items and the cost ledger intact (their FK is ON DELETE SET
 NULL). Audit-log entries are deliberately left untouched — they carry
 their own, longer compliance retention.
+
+The external LangSmith trace a run references (``langsmith_trace_id``) is
+NOT purged here: the LangSmith SDK exposes no per-run delete API (only
+whole-project deletion), so trace lifetime is governed by LangSmith's own
+retention configuration. Tracing is off by default (local-first, ADR
+0007), so no personal data leaves the machine unless it is explicitly
+enabled — see docs/adr/TODO.md.
 """
 
 import datetime

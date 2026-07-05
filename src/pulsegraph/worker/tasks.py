@@ -6,6 +6,7 @@ import uuid
 from dataclasses import replace
 
 import redis as redis_lib
+from arq import Retry
 from sqlalchemy.orm import Session
 
 from pulsegraph.config import get_settings
@@ -140,8 +141,26 @@ def run_watch_core(
 # ---------------------------------------------------------------------------
 
 
+def _deactivate_watch(db: Session, watch: Watch) -> None:
+    """Stop scheduling a watch that has failed every retry (ADR 0015).
+
+    Clears the source-plugin/pipeline failure by deactivating the watch so
+    the scheduler skips it; the FAILED run records stay visible and the
+    user can re-activate it from the dashboard once the cause is fixed.
+    """
+    db.rollback()
+    watch.is_active = False
+    db.commit()
+
+
 async def run_watch(ctx: dict, watch_id: str) -> dict:
-    """arq task: run the pipeline for one watch (ADR 0015)."""
+    """arq task: run the pipeline for one watch (ADR 0015).
+
+    On an unhandled failure the job is retried with backoff up to
+    ``worker_max_tries`` (WorkerSettings.max_tries); once the final attempt
+    also fails the watch is deactivated so a permanently broken watch stops
+    being scheduled forever.
+    """
     db: Session = ctx["db_factory"]()
     try:
         watch = db.get(Watch, uuid.UUID(watch_id))
@@ -149,8 +168,20 @@ async def run_watch(ctx: dict, watch_id: str) -> dict:
             return {"skipped": "not_found_or_inactive"}
         deps: PipelineDeps = ctx["pipeline_deps"]
         redis_client: redis_lib.Redis | None = ctx.get("redis")
-        return await asyncio.to_thread(
-            run_watch_core, db, watch, deps, redis_client
-        )
+        try:
+            return await asyncio.to_thread(
+                run_watch_core, db, watch, deps, redis_client
+            )
+        except Exception:
+            job_try = ctx.get("job_try", 1)
+            if job_try >= get_settings().worker_max_tries:
+                _deactivate_watch(db, watch)
+                return {"failed": "deactivated", "watch_id": watch_id}
+            # Not the final attempt: re-enqueue via arq's Retry so the job
+            # runs again with backoff. A plain re-raise would NOT be retried
+            # — arq only retries Retry/CancelledError/RetryJob, every other
+            # exception finishes the job as failed (arq worker.py). Backoff
+            # grows with the attempt, capped so it never defers absurdly long.
+            raise Retry(defer=min(2**job_try, 300)) from None
     finally:
         db.close()

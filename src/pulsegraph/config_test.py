@@ -1,5 +1,7 @@
 """Tests for application settings."""
 
+import pytest
+
 from pulsegraph.config import Settings
 
 
@@ -60,3 +62,37 @@ def test_langsmith_active_when_enabled_and_keyed() -> None:
     settings = _settings(LANGSMITH_ENABLED="true", LANGSMITH_API_KEY="k")
 
     assert settings.langsmith_active is True
+
+
+# --- validate_production_secrets (ADR 0009/0021) ---
+
+_STRONG_SECRET = "x" * 32
+
+
+def test_validate_secrets_noop_locally() -> None:
+    # Local-first default: the dev secret is fine, no exception.
+    _settings().validate_production_secrets()
+
+
+def test_validate_secrets_rejects_dev_default_in_prod() -> None:
+    settings = _settings(PULSEGRAPH_ENV="production")
+
+    with pytest.raises(RuntimeError, match="dev default"):
+        settings.validate_production_secrets()
+
+
+def test_validate_secrets_rejects_short_secret_in_prod() -> None:
+    settings = _settings(
+        PULSEGRAPH_ENV="production", JWT_SECRET_KEY="too-short"
+    )
+
+    with pytest.raises(RuntimeError, match="at least 32 bytes"):
+        settings.validate_production_secrets()
+
+
+def test_validate_secrets_accepts_strong_secret_in_prod() -> None:
+    settings = _settings(
+        PULSEGRAPH_ENV="production", JWT_SECRET_KEY=_STRONG_SECRET
+    )
+
+    settings.validate_production_secrets()

@@ -1,9 +1,12 @@
 """Tests for run_watch_core and rate-limit logic (ADR 0015)."""
 
+import asyncio
 import datetime
 import uuid
 
 import fakeredis
+import pytest
+from arq import Retry
 
 from pulsegraph.api._fake import FakeSession
 from pulsegraph.db.models import PipelineRun, SourceHealth, Watch
@@ -16,6 +19,7 @@ from pulsegraph.pipeline.local import (
     KeywordModelClient,
     StaticSourcePlugin,
 )
+from pulsegraph.worker import tasks
 from pulsegraph.worker.tasks import run_watch_core
 
 _NOW = datetime.datetime.now(datetime.UTC)
@@ -141,6 +145,58 @@ def test_run_watch_core_processes_items() -> None:
     db = FakeSession(watch)
     result = run_watch_core(db, watch, _deps(records))
     assert result["items"] == 2
+
+
+# ---------------------------------------------------------------------------
+# run_watch retry/deactivation (ADR 0015)
+# ---------------------------------------------------------------------------
+
+
+def test_run_watch_deactivates_watch_after_final_failure(monkeypatch) -> None:
+    # On the final retry a permanently failing watch is deactivated so the
+    # scheduler stops triggering it (default worker_max_tries is 3).
+    watch = _watch()
+    db = FakeSession(watch)
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("permanent failure")
+
+    monkeypatch.setattr(tasks, "run_watch_core", boom)
+    ctx = {
+        "db_factory": lambda: db,
+        "pipeline_deps": _deps(),
+        "redis": None,
+        "job_try": 3,
+    }
+
+    result = asyncio.run(tasks.run_watch(ctx, str(watch.id)))
+
+    assert result["failed"] == "deactivated"
+    assert watch.is_active is False
+
+
+def test_run_watch_retries_before_final_try(monkeypatch) -> None:
+    # An earlier attempt raises arq's Retry so the job is re-enqueued with
+    # backoff (a plain re-raise would NOT be retried by arq); the watch
+    # stays active until every attempt has failed.
+    watch = _watch()
+    db = FakeSession(watch)
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("transient failure")
+
+    monkeypatch.setattr(tasks, "run_watch_core", boom)
+    ctx = {
+        "db_factory": lambda: db,
+        "pipeline_deps": _deps(),
+        "redis": None,
+        "job_try": 1,
+    }
+
+    with pytest.raises(Retry):
+        asyncio.run(tasks.run_watch(ctx, str(watch.id)))
+
+    assert watch.is_active is True
 
 
 def test_run_watch_core_pauses_source_on_schema_drift() -> None:
