@@ -16,6 +16,19 @@ push being silently lost. A user with two channels where only one is
 down may see an occasional duplicate on the channel that did succeed --
 that is a deliberate trade-off against ever losing a notification
 outright.
+
+A push where *every* channel failed increments ``Notification.attempts``
+for each row in the batch. Once a row's attempts reach
+``Settings.digest_max_attempts`` it is dead-lettered (status set to
+``FAILED``) instead of staying ``PENDING`` forever, so a destination
+that is completely and permanently broken (e.g. a dead webhook URL, or
+the only configured channel) does not grow that user's pending queue
+indefinitely. A push where *some* channel got through does not count
+against the cap, even though the row stays ``PENDING`` (see above) --
+otherwise a user with one broken and one healthy channel would
+eventually have their notifications dead-lettered on the *working*
+channel too, which is exactly the loss the "duplicate, never lost"
+trade-off above is meant to prevent.
 """
 
 import datetime
@@ -79,9 +92,12 @@ def send_digests(
     """Batch and deliver every pending digest.
 
     A user's notifications are marked ``SENT`` only when their digest
-    push actually succeeds; a failed push leaves them ``PENDING`` for the
-    next run to retry (see the module docstring). Returns counts of
-    users, notifications digested, and users whose push failed this run.
+    push actually succeeds on every channel; otherwise they stay
+    ``PENDING`` for the next run to retry, unless *no* channel got
+    through and the row has now hit ``digest_max_attempts``, in which
+    case it is dead-lettered (``FAILED``) instead (see the module
+    docstring). Returns counts of users, notifications digested, users
+    whose push failed this run, and notifications dead-lettered this run.
     Commits its own transaction.
     """
     now = now or datetime.datetime.now(datetime.UTC)
@@ -102,14 +118,23 @@ def send_digests(
     )
     digested = 0
     failed_users = 0
+    dead_lettered = 0
     for user_id, notifications in by_user.items():
         summaries = []
         for notification in notifications:
             analysis = db.get(Analysis, notification.analysis_id)
             summaries.append(analysis.result if analysis else "(item)")
-        delivered = sink.send(build_digest_draft(str(user_id), summaries, now))
-        if not delivered:
+        result = sink.send_detailed(
+            build_digest_draft(str(user_id), summaries, now)
+        )
+        if not result.all_ok:
             failed_users += 1
+            if not result.any_ok:
+                for notification in notifications:
+                    notification.attempts += 1
+                    if notification.attempts >= settings.digest_max_attempts:
+                        notification.status = NotificationStatus.FAILED
+                        dead_lettered += 1
             continue
         for notification in notifications:
             notification.status = NotificationStatus.SENT
@@ -121,6 +146,7 @@ def send_digests(
         "users": len(by_user),
         "notifications": digested,
         "failed_users": failed_users,
+        "dead_lettered": dead_lettered,
     }
 
 

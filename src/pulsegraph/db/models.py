@@ -338,6 +338,14 @@ class Notification(Base):
     delivered_at: Mapped[datetime.datetime | None] = mapped_column(
         DateTime(timezone=True)
     )
+    # Digest delivery retry count (ADR 0016). Incremented each time a
+    # daily-digest push fails for this row; once it reaches
+    # Settings.digest_max_attempts the row is dead-lettered (status set to
+    # FAILED) instead of being retried forever. Unused for instant/
+    # dashboard delivery, which never leaves a row PENDING.
+    attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
 
 
 class NotificationSetting(Base):

@@ -139,6 +139,11 @@ class Settings(BaseSettings):
     # chain, plus pipeline-run traces, are purged once older than this
     # window. A scheduled job enforces it (see worker.retention).
     data_retention_days: int = Field(default=90, alias="DATA_RETENTION_DAYS")
+    # Digest delivery retry cap (ADR 0016): a daily-digest notification is
+    # retried once per day on push failure; after this many total failed
+    # attempts it is dead-lettered (marked FAILED) instead of retrying
+    # forever against a permanently broken destination.
+    digest_max_attempts: int = Field(default=5, alias="DIGEST_MAX_ATTEMPTS")
 
     @property
     def cloud_model_available(self) -> bool:

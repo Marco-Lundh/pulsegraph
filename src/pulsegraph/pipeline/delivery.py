@@ -19,6 +19,7 @@ import logging
 import smtplib
 from collections.abc import Callable, Sequence
 from email.message import EmailMessage
+from typing import NamedTuple
 
 import httpx
 
@@ -156,6 +157,13 @@ class WebhookSink:
         response.raise_for_status()
 
 
+class DeliveryResult(NamedTuple):
+    """Per-channel outcome of one :meth:`MultiSink.send_detailed` call."""
+
+    all_ok: bool
+    any_ok: bool
+
+
 class MultiSink:
     """Fans one draft out to several channels, isolating failures.
 
@@ -173,13 +181,27 @@ class MultiSink:
 
         Returns whether every channel succeeded. The per-run instant path
         (the Notifier node) ignores this: one channel failing must never
-        fail the run. The digest job (ADR 0016) uses it to decide whether
-        a batch is actually delivered or should stay queued for retry.
+        fail the run. See :meth:`send_detailed` for the digest job, which
+        also needs to know whether *any* channel got through.
+        """
+        return self.send_detailed(draft).all_ok
+
+    def send_detailed(self, draft: NotificationDraft) -> DeliveryResult:
+        """Deliver ``draft`` over every channel, reporting both outcomes.
+
+        ``all_ok`` mirrors :meth:`send`. ``any_ok`` is also ``True`` when
+        there are no channels at all (vacuously, same as ``all_ok``). The
+        digest job (ADR 0016) uses ``any_ok`` to tell "one of several
+        channels is broken" (destination still reachable overall, so keep
+        retrying) apart from "every channel is broken" (destination is
+        genuinely dead, eligible for the retry-cap dead-letter).
         """
         all_ok = True
+        any_ok = not self._sinks
         for sink in self._sinks:
             try:
                 sink.send(draft)
+                any_ok = True
             except Exception:
                 all_ok = False
                 logger.exception(
@@ -187,4 +209,4 @@ class MultiSink:
                     type(sink).__name__,
                     draft.user_id,
                 )
-        return all_ok
+        return DeliveryResult(all_ok=all_ok, any_ok=any_ok)

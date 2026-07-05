@@ -203,3 +203,36 @@ def test_multi_sink_send_returns_false_when_any_channel_fails() -> None:
 
 def test_multi_sink_send_returns_true_with_no_channels() -> None:
     assert MultiSink([]).send(_draft()) is True
+
+
+# --- MultiSink.send_detailed -------------------------------------------
+
+
+def test_multi_sink_send_detailed_all_ok_when_all_succeed() -> None:
+    sink = MultiSink([_CollectingSink(), _CollectingSink()])
+    result = sink.send_detailed(_draft())
+    assert result.all_ok is True
+    assert result.any_ok is True
+
+
+def test_multi_sink_send_detailed_any_ok_true_on_partial_failure() -> None:
+    # One channel down, one channel up: the destination is not fully
+    # dead, so callers (the digest retry cap, ADR 0016) must be able to
+    # tell this apart from every channel failing.
+    sink = MultiSink([_CollectingSink(), _FailingSink()])
+    result = sink.send_detailed(_draft())
+    assert result.all_ok is False
+    assert result.any_ok is True
+
+
+def test_multi_sink_send_detailed_any_ok_false_when_all_fail() -> None:
+    sink = MultiSink([_FailingSink(), _FailingSink()])
+    result = sink.send_detailed(_draft())
+    assert result.all_ok is False
+    assert result.any_ok is False
+
+
+def test_multi_sink_send_detailed_true_with_no_channels() -> None:
+    result = MultiSink([]).send_detailed(_draft())
+    assert result.all_ok is True
+    assert result.any_ok is True

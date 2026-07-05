@@ -12,6 +12,7 @@ from pulsegraph.domain.enums import (
     NotificationFrequency,
     NotificationStatus,
 )
+from pulsegraph.pipeline.delivery import DeliveryResult
 from pulsegraph.worker.digest import (
     build_digest_draft,
     send_digests,
@@ -35,7 +36,9 @@ def _setting(
     )
 
 
-def _pending(uid: uuid.UUID, analysis_id: uuid.UUID, key: str) -> Notification:
+def _pending(
+    uid: uuid.UUID, analysis_id: uuid.UUID, key: str, attempts: int = 0
+) -> Notification:
     return Notification(
         id=uuid.uuid4(),
         user_id=uid,
@@ -44,6 +47,7 @@ def _pending(uid: uuid.UUID, analysis_id: uuid.UUID, key: str) -> Notification:
         dedup_key=key,
         status=NotificationStatus.PENDING,
         delivered_at=None,
+        attempts=attempts,
     )
 
 
@@ -119,7 +123,12 @@ def test_send_digests_batches_and_marks_sent() -> None:
 
     result = send_digests(db, Settings(_env_file=None), now=_NOW)
 
-    assert result == {"users": 1, "notifications": 2, "failed_users": 0}
+    assert result == {
+        "users": 1,
+        "notifications": 2,
+        "failed_users": 0,
+        "dead_lettered": 0,
+    }
     assert n1.status == NotificationStatus.SENT
     assert n1.delivered_at == _NOW
     assert n2.status == NotificationStatus.SENT
@@ -128,12 +137,19 @@ def test_send_digests_batches_and_marks_sent() -> None:
 def test_send_digests_noop_without_pending() -> None:
     db = FakeSession()
     result = send_digests(db, Settings(_env_file=None), now=_NOW)
-    assert result == {"users": 0, "notifications": 0, "failed_users": 0}
+    assert result == {
+        "users": 0,
+        "notifications": 0,
+        "failed_users": 0,
+        "dead_lettered": 0,
+    }
 
 
 class _FailingSink:
-    def send(self, draft: object) -> bool:
-        return False
+    """Every channel fails: simulates a fully, permanently broken user."""
+
+    def send_detailed(self, draft: object) -> DeliveryResult:
+        return DeliveryResult(all_ok=False, any_ok=False)
 
 
 def test_send_digests_leaves_pending_on_delivery_failure(monkeypatch) -> None:
@@ -150,9 +166,15 @@ def test_send_digests_leaves_pending_on_delivery_failure(monkeypatch) -> None:
 
     result = send_digests(db, Settings(_env_file=None), now=_NOW)
 
-    assert result == {"users": 1, "notifications": 0, "failed_users": 1}
+    assert result == {
+        "users": 1,
+        "notifications": 0,
+        "failed_users": 1,
+        "dead_lettered": 0,
+    }
     assert n1.status == NotificationStatus.PENDING
     assert n1.delivered_at is None
+    assert n1.attempts == 1
 
 
 def test_send_digests_only_retries_the_failed_user(monkeypatch) -> None:
@@ -163,8 +185,9 @@ def test_send_digests_only_retries_the_failed_user(monkeypatch) -> None:
     db = FakeSession(a_ok, a_fail, n_ok, n_fail)
 
     class _PerUserSink:
-        def send(self, draft) -> bool:
-            return str(failing_uid) not in draft.user_id
+        def send_detailed(self, draft) -> DeliveryResult:
+            ok = str(failing_uid) not in draft.user_id
+            return DeliveryResult(all_ok=ok, any_ok=ok)
 
     monkeypatch.setattr(
         "pulsegraph.worker.digest.build_notification_sink",
@@ -173,6 +196,98 @@ def test_send_digests_only_retries_the_failed_user(monkeypatch) -> None:
 
     result = send_digests(db, Settings(_env_file=None), now=_NOW)
 
-    assert result == {"users": 2, "notifications": 1, "failed_users": 1}
+    assert result == {
+        "users": 2,
+        "notifications": 1,
+        "failed_users": 1,
+        "dead_lettered": 0,
+    }
     assert n_ok.status == NotificationStatus.SENT
     assert n_fail.status == NotificationStatus.PENDING
+    assert n_fail.attempts == 1
+
+
+# --- retry cap / dead-letter ------------------------------------------------
+
+
+def test_send_digests_dead_letters_after_max_attempts(monkeypatch) -> None:
+    # digest_max_attempts defaults to 5 (see Settings). A notification
+    # already at attempt 4 that fails again this run has now failed 5
+    # times total, so it must be dead-lettered instead of retried forever.
+    uid = uuid.uuid4()
+    a1 = _analysis("Update one")
+    n1 = _pending(uid, a1.id, "jobtech:1", attempts=4)
+    db = FakeSession(a1, n1)
+    monkeypatch.setattr(
+        "pulsegraph.worker.digest.build_notification_sink",
+        lambda *args, **kwargs: _FailingSink(),
+    )
+
+    result = send_digests(db, Settings(_env_file=None), now=_NOW)
+
+    assert result == {
+        "users": 1,
+        "notifications": 0,
+        "failed_users": 1,
+        "dead_lettered": 1,
+    }
+    assert n1.status == NotificationStatus.FAILED
+    assert n1.attempts == 5
+
+
+class _PartialSink:
+    """One channel ok, one broken: destination is not fully dead."""
+
+    def send_detailed(self, draft: object) -> DeliveryResult:
+        return DeliveryResult(all_ok=False, any_ok=True)
+
+
+def test_send_digests_partial_success_does_not_count_toward_cap(
+    monkeypatch,
+) -> None:
+    # A user with e.g. a working email channel and a broken webhook
+    # channel must never be dead-lettered on the working channel just
+    # because the batch isn't fully delivered (see the module docstring's
+    # "duplicate, never lost" trade-off).
+    uid = uuid.uuid4()
+    a1 = _analysis("Update one")
+    n1 = _pending(uid, a1.id, "jobtech:1", attempts=4)
+    db = FakeSession(a1, n1)
+    monkeypatch.setattr(
+        "pulsegraph.worker.digest.build_notification_sink",
+        lambda *args, **kwargs: _PartialSink(),
+    )
+
+    result = send_digests(db, Settings(_env_file=None), now=_NOW)
+
+    assert result == {
+        "users": 1,
+        "notifications": 0,
+        "failed_users": 1,
+        "dead_lettered": 0,
+    }
+    assert n1.status == NotificationStatus.PENDING
+    assert n1.attempts == 4
+
+
+def test_send_digests_dead_lettered_row_not_retried_again(monkeypatch) -> None:
+    # Once a notification is dead-lettered it is no longer PENDING, so the
+    # next scheduled run must not pick it up again.
+    uid = uuid.uuid4()
+    a1 = _analysis("Update one")
+    n1 = _pending(uid, a1.id, "jobtech:1", attempts=4)
+    db = FakeSession(a1, n1)
+    monkeypatch.setattr(
+        "pulsegraph.worker.digest.build_notification_sink",
+        lambda *args, **kwargs: _FailingSink(),
+    )
+    send_digests(db, Settings(_env_file=None), now=_NOW)
+
+    result = send_digests(db, Settings(_env_file=None), now=_NOW)
+
+    assert result == {
+        "users": 0,
+        "notifications": 0,
+        "failed_users": 0,
+        "dead_lettered": 0,
+    }

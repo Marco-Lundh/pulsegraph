@@ -137,6 +137,7 @@ erDiagram
         text dedup_key
         notification_status status
         timestamptz delivered_at
+        integer attempts
     }
 
     notification_settings {
@@ -362,6 +363,7 @@ CREATE TABLE notifications (
     dedup_key    text NOT NULL,
     status       notification_status NOT NULL DEFAULT 'pending',
     delivered_at timestamptz,
+    attempts     integer NOT NULL DEFAULT 0,
     UNIQUE (user_id, dedup_key)
 );
 CREATE INDEX idx_notifications_user ON notifications(user_id, delivered_at DESC);
