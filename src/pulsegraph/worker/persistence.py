@@ -201,6 +201,7 @@ def _persist_evaluation(
             dedup_key=draft.dedup_key,
             status=status,
             delivered_at=None if digest else now,
+            attempts=0,
         )
     )
     # Flush so a duplicate (user_id, dedup_key) trips inside the savepoint.
