@@ -117,6 +117,45 @@ def test_admin_can_access_source_health() -> None:
     assert resp.json()[0]["source"] == "jobtech"
 
 
+def test_admin_resume_source_clears_drift() -> None:
+    # Resuming a drift-paused source flips it back to healthy so the
+    # scheduler starts triggering it again (ADR 0010).
+    admin = _make_user(UserRole.ADMIN)
+    paused = SourceHealth(
+        source=SourceKind.JOBTECH,
+        status=SourceStatus.PAUSED,
+        drift_detail="missing field",
+        last_checked_at=_NOW,
+    )
+    db = FakeSession(admin, paused)
+    client, _, _ = make_client(db=db, user=admin)
+
+    resp = client.post("/admin/source-health/jobtech/resume")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "healthy"
+    assert body["drift_detail"] is None
+    assert paused.status == SourceStatus.HEALTHY
+    # The action is audit-logged (ADR 0021).
+    actions = [e.action for e in db.query(AuditLogEntry).all()]
+    assert "source.resume" in actions
+
+
+def test_admin_resume_unknown_source_404() -> None:
+    admin = _make_user(UserRole.ADMIN)
+    db = FakeSession(admin)
+    client, _, _ = make_client(db=db, user=admin)
+    resp = client.post("/admin/source-health/riksdagen/resume")
+    assert resp.status_code == 404
+
+
+def test_non_admin_cannot_resume_source() -> None:
+    client, _, _ = make_client()
+    resp = client.post("/admin/source-health/jobtech/resume")
+    assert resp.status_code == 403
+
+
 # --- eval health ---
 
 

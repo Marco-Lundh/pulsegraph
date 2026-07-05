@@ -61,20 +61,36 @@ def load_all_golden(
     return dict(grouped)
 
 
+def _to_jsonl(example: GoldenExample) -> str:
+    """Serialize one example to a single JSONL line."""
+    return json.dumps(
+        {
+            "source": example.source.value,
+            "content": example.content,
+            "should_notify": example.should_notify,
+            "note": example.note,
+        }
+    )
+
+
 def dump_golden(examples: list[GoldenExample], path: pathlib.Path) -> None:
     """Write *examples* to *path* as JSONL (one example per line)."""
-    lines = [
-        json.dumps(
-            {
-                "source": example.source.value,
-                "content": example.content,
-                "should_notify": example.should_notify,
-                "note": example.note,
-            }
-        )
-        for example in examples
-    ]
+    lines = [_to_jsonl(example) for example in examples]
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def append_golden(examples: list[GoldenExample], path: pathlib.Path) -> None:
+    """Append *examples* to *path* as JSONL, creating it if needed.
+
+    Unlike :func:`dump_golden` this leaves existing curated lines untouched,
+    so growing a dataset from review verdicts (ADR 0012) produces a minimal,
+    reviewable diff rather than rewriting the whole file.
+    """
+    if not examples:
+        return
+    with path.open("a", encoding="utf-8") as handle:
+        for example in examples:
+            handle.write(_to_jsonl(example) + "\n")
 
 
 # A human verdict of approved/corrected means the item was worth
@@ -95,6 +111,40 @@ def _content_from_item(item: Item | None, analysis: Analysis) -> str:
         if text:
             return text
     return analysis.result
+
+
+def grow_golden(
+    db: Session,
+    golden_dir: pathlib.Path = GOLDEN_DIR,
+) -> dict[SourceKind, int]:
+    """Append review-derived examples to the golden datasets (ADR 0012).
+
+    Closes the review -> dataset half of the improvement flywheel: each
+    review-queue verdict becomes a labeled example appended to its source's
+    dataset, unless an example with identical content is already present.
+    Returns the number of new examples added per source; idempotent across
+    repeated runs.
+    """
+    existing = load_all_golden(golden_dir)
+    seen_content = {
+        source: {example.content for example in examples}
+        for source, examples in existing.items()
+    }
+
+    new_by_source: dict[SourceKind, list[GoldenExample]] = defaultdict(list)
+    for example in golden_from_decisions(db):
+        seen = seen_content.setdefault(example.source, set())
+        if example.content in seen:
+            continue
+        seen.add(example.content)
+        new_by_source[example.source].append(example)
+
+    for source, examples in new_by_source.items():
+        append_golden(examples, golden_dir / f"{source.value}.jsonl")
+
+    return {
+        source: len(examples) for source, examples in new_by_source.items()
+    }
 
 
 def golden_from_decisions(db: Session) -> list[GoldenExample]:

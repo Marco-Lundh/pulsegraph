@@ -92,6 +92,26 @@ def test_analyze_meters_cost_into_redis(r) -> None:
     assert get_monthly_cost(r) == pytest.approx(30.0)
 
 
+def test_analyze_returns_tokens_and_cost_on_result() -> None:
+    # The per-call ledger (ADR 0008) is fed from the result: token counts
+    # and the priced USD cost travel with the analysis, even with no Redis.
+    payload = {"summary": "s", "relevance": 0.5, "confidence": 0.9}
+    client = ClaudeModelClient(
+        _FakeAnthropic(_message(payload, inp=1_000_000, out=1_000_000)),
+        "m",
+        input_cost_per_token=5.0 / 1_000_000,
+        output_cost_per_token=25.0 / 1_000_000,
+    )
+
+    result = client.analyze("content")
+
+    assert result.tokens_in == 1_000_000
+    assert result.tokens_out == 1_000_000
+    assert result.cost_usd == pytest.approx(30.0)
+    # Sampling params travel with the result for provenance (ADR 0011).
+    assert result.params == {"max_tokens": 1024}
+
+
 def test_cost_cap_blocks_call_before_request(r) -> None:
     increment_cost(r, 10.0)  # already at the cap
     fake = _FakeAnthropic(_message({"summary": "s"}))

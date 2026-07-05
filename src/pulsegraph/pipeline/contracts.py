@@ -41,6 +41,10 @@ class AnalysisResult:
     ``relevance`` is how notable the item is for the watch;
     ``confidence`` is the model's certainty in its own output and
     drives the cloud fallback decision (ADR 0002).
+
+    ``tokens_in``/``tokens_out``/``cost_usd`` meter the model call so the
+    per-user, per-run cost ledger can be written (ADR 0008). They are zero
+    for the offline adapter and for local calls that report no token usage.
     """
 
     summary: str
@@ -48,6 +52,12 @@ class AnalysisResult:
     confidence: float
     model: ModelKind
     labels: tuple[str, ...] = ()
+    tokens_in: int = 0
+    tokens_out: int = 0
+    cost_usd: float = 0.0
+    # Sampling params actually used (temperature/top_p/seed/max_tokens),
+    # recorded on the Analysis for reproducibility (ADR 0011).
+    params: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)

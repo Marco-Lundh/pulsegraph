@@ -103,8 +103,22 @@ def fetcher_node(deps: PipelineDeps) -> Node:
             try:
                 plugin.validate_schema(record)
             except SchemaValidationError as exc:
-                errors.append(str(exc))
-                continue
+                # A missing required field means the source's response
+                # schema drifted. Fail loud (ADR 0010): stop this run, flag
+                # the drift so the worker pauses the source, and never pass
+                # a changed schema downstream.
+                detail = (
+                    f"Source schema for {watch.source} did not match the "
+                    f"expected format, run paused: {exc}"
+                )
+                errors.append(detail)
+                return {
+                    "raw_records": raw,
+                    "items": [],
+                    "seen_hashes": seen,
+                    "errors": errors,
+                    "drift_detail": detail,
+                }
             item = plugin.parse(record)
             clean = sanitize_text(item.content)
             digest = content_hash(clean)

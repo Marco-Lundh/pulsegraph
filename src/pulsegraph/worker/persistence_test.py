@@ -6,10 +6,13 @@ import uuid
 from pulsegraph.api._fake import FakeSession
 from pulsegraph.db.models import (
     Analysis,
+    CostEvent,
     Evaluation,
     Item,
     Notification,
     PipelineRun,
+    Prompt,
+    SourceHealth,
     Watch,
 )
 from pulsegraph.domain.enums import (
@@ -17,7 +20,9 @@ from pulsegraph.domain.enums import (
     ModelKind,
     NotificationChannel,
     NotificationStatus,
+    PromptRole,
     SourceKind,
+    SourceStatus,
 )
 from pulsegraph.pipeline.agents import build_notification_draft
 from pulsegraph.pipeline.contracts import (
@@ -28,6 +33,7 @@ from pulsegraph.pipeline.contracts import (
 from pulsegraph.sources.base import FetchedItem
 from pulsegraph.worker.persistence import (
     load_dedup_memory,
+    mark_source_paused,
     persist_run_results,
 )
 
@@ -53,6 +59,30 @@ def _run(watch: Watch) -> PipelineRun:
         watch_id=watch.id,
         started_at=_NOW,
     )
+
+
+def test_mark_source_paused_inserts_when_absent() -> None:
+    db = FakeSession()
+    mark_source_paused(db, SourceKind.JOBTECH, "schema drifted")
+    rows = db.query(SourceHealth).all()
+    assert len(rows) == 1
+    assert rows[0].status == SourceStatus.PAUSED
+    assert rows[0].drift_detail == "schema drifted"
+
+
+def test_mark_source_paused_updates_existing_row() -> None:
+    existing = SourceHealth(
+        source=SourceKind.JOBTECH,
+        status=SourceStatus.HEALTHY,
+        drift_detail=None,
+        last_checked_at=_NOW,
+    )
+    db = FakeSession(existing)
+    mark_source_paused(db, SourceKind.JOBTECH, "fields dropped")
+    # Updated in place, not duplicated.
+    assert len(db.query(SourceHealth).all()) == 1
+    assert existing.status == SourceStatus.PAUSED
+    assert existing.drift_detail == "fields dropped"
 
 
 def _evaluation(
@@ -136,6 +166,106 @@ def test_persists_full_chain_for_approved_item() -> None:
     assert notif.status == NotificationStatus.SENT
     assert notif.delivered_at == _NOW
     assert notif.dedup_key == "jobtech:42"
+
+
+def test_persists_prompt_id_and_params_on_analysis() -> None:
+    # The active analyzer prompt is pinned and the model's sampling params
+    # are recorded on the Analysis for reproducibility (ADR 0011).
+    watch = _watch()
+    run = _run(watch)
+    prompt = Prompt(
+        id=uuid.uuid4(),
+        name="analyzer",
+        role=PromptRole.ANALYZER,
+        version=1,
+        template="...",
+        is_active=True,
+    )
+    db = FakeSession(watch, run, prompt)
+
+    item = FetchedItem(
+        source=SourceKind.JOBTECH,
+        external_id="8",
+        content="Analyzed with params",
+        raw={"id": "8", "title": "Params item"},
+    )
+    result = AnalysisResult(
+        summary="Params item",
+        relevance=0.9,
+        confidence=0.95,
+        model=ModelKind.CLAUDE,
+        labels=(),
+        params={"max_tokens": 512},
+    )
+    ev = EvaluationRecord(
+        AnalysisRecord(item=item, content_hash="c8", result=result),
+        EvalStatus.REVIEW,
+        "needs review",
+    )
+
+    persist_run_results(
+        db,
+        run,
+        watch,
+        _state([ev], notify=False),
+        embedding_model="hashing-768-v1",
+        model_versions=_MODEL_VERSIONS,
+        now=_NOW,
+    )
+
+    analysis = db.query(Analysis).all()[0]
+    assert analysis.prompt_id == prompt.id
+    assert analysis.params == {"max_tokens": 512}
+
+
+def test_persists_cost_event_per_analysis() -> None:
+    # Every model call is recorded in the per-user, per-run ledger (ADR
+    # 0008), whether or not the item is ultimately notified.
+    watch = _watch()
+    run = _run(watch)
+    db = FakeSession(watch, run)
+
+    item = FetchedItem(
+        source=SourceKind.JOBTECH,
+        external_id="7",
+        content="Cloud-analyzed item",
+        raw={"id": "7", "title": "Cloud item"},
+    )
+    result = AnalysisResult(
+        summary="Cloud item",
+        relevance=0.9,
+        confidence=0.95,
+        model=ModelKind.CLAUDE,
+        labels=(),
+        tokens_in=1200,
+        tokens_out=300,
+        cost_usd=0.0135,
+    )
+    ev = EvaluationRecord(
+        AnalysisRecord(item=item, content_hash="c7", result=result),
+        EvalStatus.REVIEW,
+        "needs review",
+    )
+
+    persist_run_results(
+        db,
+        run,
+        watch,
+        _state([ev], notify=False),
+        embedding_model="hashing-768-v1",
+        model_versions=_MODEL_VERSIONS,
+        now=_NOW,
+    )
+
+    costs = db.query(CostEvent).all()
+    assert len(costs) == 1
+    cost = costs[0]
+    assert cost.user_id == watch.user_id
+    assert cost.run_id == run.id
+    assert cost.model == ModelKind.CLAUDE
+    assert cost.tokens_in == 1200
+    assert cost.tokens_out == 300
+    assert cost.cost_usd == 0.0135
 
 
 def test_digest_mode_writes_pending_notification() -> None:

@@ -13,17 +13,9 @@ import httpx
 from pulsegraph.domain.enums import ModelKind
 from pulsegraph.pipeline.contracts import AnalysisResult
 
-# Ask the local model for a compact, machine-readable verdict so the
-# Analyzer gets the same structured shape the cloud model returns.
-_ANALYZE_PROMPT = (
-    "You are a content analyst. Read the item below and respond with a "
-    "single JSON object and nothing else, with keys:\n"
-    '  "summary": a one-line summary (string),\n'
-    '  "relevance": how notable the item is, 0.0-1.0 (number),\n'
-    '  "confidence": your certainty in this analysis, 0.0-1.0 (number),\n'
-    '  "labels": short topical tags (array of strings).\n\n'
-    "ITEM:\n{content}"
-)
+# The analyzer instruction lives in the versioned prompt registry (ADR
+# 0011) so the row an Analysis pins matches the text actually run.
+from pulsegraph.pipeline.prompts import ANALYZER_TEMPLATE
 
 
 def _clamp(value: object, default: float = 0.0) -> float:
@@ -91,7 +83,7 @@ class OllamaModelClient:
                 f"{self._base_url}/api/generate",
                 json={
                     "model": self._model,
-                    "prompt": _ANALYZE_PROMPT.format(content=content),
+                    "prompt": ANALYZER_TEMPLATE.format(content=content),
                     "format": "json",
                     "stream": False,
                 },
@@ -100,7 +92,8 @@ class OllamaModelClient:
         except httpx.TimeoutException as exc:
             raise TimeoutError("ollama analysis timed out") from exc
         response.raise_for_status()
-        payload = json.loads(response.json()["response"])
+        body = response.json()
+        payload = json.loads(body["response"])
         labels = payload.get("labels") or []
         return AnalysisResult(
             summary=str(payload.get("summary", "")) or "(empty)",
@@ -108,4 +101,8 @@ class OllamaModelClient:
             confidence=_clamp(payload.get("confidence")),
             model=ModelKind.OLLAMA,
             labels=tuple(str(label) for label in labels),
+            # Token counts are recorded for the ledger (ADR 0008); the local
+            # model is free, so cost stays zero.
+            tokens_in=int(body.get("prompt_eval_count", 0)),
+            tokens_out=int(body.get("eval_count", 0)),
         )

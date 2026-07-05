@@ -149,7 +149,7 @@ src/pulsegraph/
 
 dashboard/            React + Vite + TypeScript frontend (end-user + admin UI)
 migrations/           Alembic migrations
-scripts/              Offline eval CLI, e2e smoke, GDPR cascade check
+scripts/              Offline eval CLI, golden-dataset growth, e2e smoke, GDPR cascade check
 docs/                 ADRs, architecture, and data model
 ```
 

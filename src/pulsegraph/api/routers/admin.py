@@ -22,7 +22,7 @@ from pulsegraph.db.models import (
     SourceHealth,
     User,
 )
-from pulsegraph.domain.enums import EvalStatus
+from pulsegraph.domain.enums import EvalStatus, SourceKind, SourceStatus
 from pulsegraph.redis_client import make_redis
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -34,6 +34,37 @@ def list_source_health(
     _: User = Depends(require_admin),
 ) -> list[SourceHealth]:
     return db.query(SourceHealth).all()
+
+
+@router.post("/source-health/{source}/resume", response_model=SourceHealthOut)
+def resume_source(
+    source: SourceKind,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+) -> SourceHealth:
+    """Clear a source's drift pause so the scheduler resumes it (ADR 0010).
+
+    A source paused for schema drift is never triggered again on its own
+    (the scheduler skips it), so recovery is an explicit operator action
+    once the upstream schema is back or the plugin has been fixed.
+    """
+    row = db.query(SourceHealth).filter(SourceHealth.source == source).first()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    row.status = SourceStatus.HEALTHY
+    row.drift_detail = None
+    row.last_checked_at = datetime.datetime.now(datetime.UTC)
+    db.add(
+        AuditLogEntry(
+            actor_user_id=admin.id,
+            action="source.resume",
+            entity_type="source_health",
+            entity_id=None,
+            meta={"source": source},
+        )
+    )
+    db.commit()
+    return row
 
 
 @router.get("/ops")

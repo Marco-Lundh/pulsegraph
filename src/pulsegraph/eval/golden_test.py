@@ -22,6 +22,7 @@ from pulsegraph.eval.golden import (
     GoldenExample,
     dump_golden,
     golden_from_decisions,
+    grow_golden,
     load_all_golden,
     load_golden_file,
 )
@@ -105,3 +106,30 @@ def test_golden_from_decisions_labels_rejected_as_not_notify() -> None:
     db = _decision_chain(Decision.REJECTED)
     examples = golden_from_decisions(db)
     assert examples[0].should_notify is False
+
+
+# --- growing the datasets on disk from review verdicts ---------------------
+
+
+def test_grow_golden_appends_review_example(tmp_path) -> None:
+    db = _decision_chain(Decision.APPROVED)
+    added = grow_golden(db, tmp_path)
+
+    assert added == {SourceKind.JOBTECH: 1}
+    examples = load_golden_file(tmp_path / "jobtech.jsonl")
+    assert len(examples) == 1
+    assert examples[0].should_notify is True
+    assert "Python role" in examples[0].content
+
+
+def test_grow_golden_is_idempotent(tmp_path) -> None:
+    db = _decision_chain(Decision.APPROVED)
+    grow_golden(db, tmp_path)
+    # A second run finds the same content already present and adds nothing.
+    assert grow_golden(db, tmp_path) == {}
+    assert len(load_golden_file(tmp_path / "jobtech.jsonl")) == 1
+
+
+def test_grow_golden_no_decisions_writes_nothing(tmp_path) -> None:
+    assert grow_golden(FakeSession(), tmp_path) == {}
+    assert not list(tmp_path.glob("*.jsonl"))

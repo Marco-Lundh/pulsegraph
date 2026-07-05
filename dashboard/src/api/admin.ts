@@ -65,6 +65,8 @@ export interface ReviewDecisionCreate {
 export const adminApi = {
   sourceHealth: (): Promise<SourceHealthOut[]> =>
     api.get<SourceHealthOut[]>('/admin/source-health'),
+  resumeSource: (source: SourceKind): Promise<SourceHealthOut> =>
+    api.post<SourceHealthOut>(`/admin/source-health/${source}/resume`, {}),
   ops: (): Promise<OpsSummary> => api.get<OpsSummary>('/admin/ops'),
   evalHealth: (): Promise<EvalHealth> =>
     api.get<EvalHealth>('/admin/eval-health'),
