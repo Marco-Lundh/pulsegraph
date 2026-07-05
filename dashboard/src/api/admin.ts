@@ -54,6 +54,23 @@ export interface ReviewQueueItem {
   evaluated_at: string;
 }
 
+export interface CostByUser {
+  user_id: string;
+  email: string | null;
+  events: number;
+  tokens_in: number;
+  tokens_out: number;
+  cost_usd: number;
+}
+
+export interface CostSummary {
+  window_days: number;
+  total_usd: number;
+  total_tokens_in: number;
+  total_tokens_out: number;
+  by_user: CostByUser[];
+}
+
 export type ReviewDecisionKind = 'approved' | 'rejected' | 'corrected';
 
 export interface ReviewDecisionCreate {
@@ -68,6 +85,7 @@ export const adminApi = {
   resumeSource: (source: SourceKind): Promise<SourceHealthOut> =>
     api.post<SourceHealthOut>(`/admin/source-health/${source}/resume`, {}),
   ops: (): Promise<OpsSummary> => api.get<OpsSummary>('/admin/ops'),
+  costs: (): Promise<CostSummary> => api.get<CostSummary>('/admin/costs'),
   evalHealth: (): Promise<EvalHealth> =>
     api.get<EvalHealth>('/admin/eval-health'),
   reviewQueue: (): Promise<ReviewQueueItem[]> =>

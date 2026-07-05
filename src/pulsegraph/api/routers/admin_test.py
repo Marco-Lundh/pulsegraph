@@ -6,6 +6,7 @@ import uuid
 from pulsegraph.api._fake import FakeSession, _make_user, make_client
 from pulsegraph.db.models import (
     AuditLogEntry,
+    CostEvent,
     Evaluation,
     ReviewDecision,
     SourceHealth,
@@ -13,6 +14,7 @@ from pulsegraph.db.models import (
 )
 from pulsegraph.domain.enums import (
     EvalStatus,
+    ModelKind,
     SourceKind,
     SourceStatus,
     UserRole,
@@ -174,6 +176,40 @@ def test_admin_eval_health_reports_pct_approved() -> None:
 def test_non_admin_cannot_access_eval_health() -> None:
     client, _, _ = make_client()
     resp = client.get("/admin/eval-health")
+    assert resp.status_code == 403
+
+
+# --- cost ledger ---
+
+
+def test_admin_costs_reports_per_user_spend() -> None:
+    admin = _make_user(UserRole.ADMIN)
+    spend_user = _make_user(UserRole.USER)
+    event = CostEvent(
+        id=uuid.uuid4(),
+        user_id=spend_user.id,
+        run_id=uuid.uuid4(),
+        model=ModelKind.CLAUDE,
+        tokens_in=1000,
+        tokens_out=200,
+        cost_usd=0.42,
+        created_at=_NOW,
+    )
+    db = FakeSession(admin, spend_user, event)
+    client, _, _ = make_client(db=db, user=admin)
+
+    resp = client.get("/admin/costs")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total_usd"] == 0.42
+    assert body["by_user"][0]["email"] == spend_user.email
+    assert body["by_user"][0]["cost_usd"] == 0.42
+
+
+def test_non_admin_cannot_access_costs() -> None:
+    client, _, _ = make_client()
+    resp = client.get("/admin/costs")
     assert resp.status_code == 403
 
 

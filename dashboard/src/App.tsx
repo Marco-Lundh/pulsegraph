@@ -12,12 +12,14 @@ import { WatchDetailPage } from './pages/WatchDetailPage';
 import { CreateWatchPage } from './pages/CreateWatchPage';
 import { NotificationsPage } from './pages/NotificationsPage';
 import { RunsPage } from './pages/RunsPage';
+import { RunDetailPage } from './pages/RunDetailPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { AdminLayout } from './pages/AdminLayout';
 import { AdminOpsPage } from './pages/AdminOpsPage';
 import { AdminSourceHealthPage } from './pages/AdminSourceHealthPage';
 import { AdminReviewQueuePage } from './pages/AdminReviewQueuePage';
 import { AdminUsersPage } from './pages/AdminUsersPage';
+import { AdminCostsPage } from './pages/AdminCostsPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -41,6 +43,7 @@ export default function App() {
               <Route path="/watches/:id" element={<WatchDetailPage />} />
               <Route path="/notifications" element={<NotificationsPage />} />
               <Route path="/runs" element={<RunsPage />} />
+              <Route path="/runs/:runId" element={<RunDetailPage />} />
               <Route path="/settings" element={<SettingsPage />} />
               <Route
                 path="/admin"
@@ -54,6 +57,7 @@ export default function App() {
                 <Route path="ops" element={<AdminOpsPage />} />
                 <Route path="source-health" element={<AdminSourceHealthPage />} />
                 <Route path="review-queue" element={<AdminReviewQueuePage />} />
+                <Route path="costs" element={<AdminCostsPage />} />
                 <Route path="users" element={<AdminUsersPage />} />
               </Route>
             </Route>
