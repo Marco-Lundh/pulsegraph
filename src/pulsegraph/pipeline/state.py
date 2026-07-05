@@ -36,3 +36,9 @@ class PipelineState(TypedDict, total=False):
 
     # Non-fatal problems collected without aborting the run.
     errors: list[str]
+
+    # Set by the Fetcher when a source's response fails schema validation
+    # (ADR 0010). Its presence short-circuits the graph to the end: the run
+    # is marked paused and the source is flagged for drift, rather than
+    # silently processing a changed schema.
+    drift_detail: str

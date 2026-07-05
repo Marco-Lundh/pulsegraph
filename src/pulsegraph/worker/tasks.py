@@ -19,6 +19,7 @@ from pulsegraph.redis_client import check_rate
 from pulsegraph.worker.digest import user_wants_digest
 from pulsegraph.worker.persistence import (
     load_dedup_memory,
+    mark_source_paused,
     persist_run_results,
 )
 from pulsegraph.worker.sinks import build_notification_sink
@@ -93,20 +94,29 @@ def run_watch_core(
                 seen_hashes=seen_hashes,
                 sent_dedup_keys=sent_dedup_keys,
             )
-        item_count = len(state.get("items") or [])
-        persist_run_results(
-            db,
-            run,
-            watch,
-            state,
-            embedding_model=run_deps.embedder.model_name,
-            model_versions={
-                ModelKind.CLAUDE: settings.anthropic_model,
-                ModelKind.OLLAMA: settings.ollama_model,
-            },
-            digest=user_wants_digest(db, watch.user_id),
-        )
-        run.status = RunStatus.SUCCEEDED
+        drift_detail = state.get("drift_detail")
+        if drift_detail:
+            # The source's schema drifted: fail loud (ADR 0010). Pause the
+            # source so the scheduler stops triggering it, and mark this run
+            # PAUSED rather than SUCCEEDED. Nothing is persisted downstream.
+            mark_source_paused(db, watch.source, drift_detail)
+            run.status = RunStatus.PAUSED
+            item_count = 0
+        else:
+            item_count = len(state.get("items") or [])
+            persist_run_results(
+                db,
+                run,
+                watch,
+                state,
+                embedding_model=run_deps.embedder.model_name,
+                model_versions={
+                    ModelKind.CLAUDE: settings.anthropic_model,
+                    ModelKind.OLLAMA: settings.ollama_model,
+                },
+                digest=user_wants_digest(db, watch.user_id),
+            )
+            run.status = RunStatus.SUCCEEDED
     except Exception as exc:
         # Discard any half-written provenance; keep a FAILED run record.
         db.rollback()

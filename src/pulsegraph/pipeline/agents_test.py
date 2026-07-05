@@ -84,7 +84,10 @@ def test_fetcher_deduplicates_and_sanitizes() -> None:
     assert out["raw_records"]  # raw retained for provenance
 
 
-def test_fetcher_records_schema_errors_without_aborting() -> None:
+def test_fetcher_signals_drift_on_schema_error() -> None:
+    # A record missing a required field means the source schema drifted;
+    # the Fetcher fails loud (ADR 0010): no items, and a drift signal the
+    # graph uses to short-circuit and the worker uses to pause the source.
     registry = DictSourceRegistry()
     registry.register(StaticSourcePlugin(SourceKind.JOBTECH, [{"id": "1"}]))
     deps = PipelineDeps(
@@ -96,7 +99,30 @@ def test_fetcher_records_schema_errors_without_aborting() -> None:
     )
     out = fetcher_node(deps)({"watch": WATCH, "seen_hashes": set()})
     assert out["items"] == []
-    assert out["errors"] and "missing" in out["errors"][0]
+    assert "did not match the expected format" in out["drift_detail"]
+    assert out["errors"] and out["errors"][0] == out["drift_detail"]
+
+
+def test_fetcher_stops_at_first_drift_and_skips_valid_tail() -> None:
+    # Drift halts the run at the first bad record: a valid record after it
+    # is not processed, because the whole source run is paused (ADR 0010).
+    registry = DictSourceRegistry()
+    registry.register(
+        StaticSourcePlugin(
+            SourceKind.JOBTECH,
+            [{"id": "1"}, {"id": "2", "title": "ok", "body": "x" * 700}],
+        )
+    )
+    deps = PipelineDeps(
+        registry=registry,
+        embedder=HashingEmbedder(),
+        model=KeywordModelClient(),
+        sink=InMemorySink(),
+        cloud_available=False,
+    )
+    out = fetcher_node(deps)({"watch": WATCH, "seen_hashes": set()})
+    assert out["items"] == []
+    assert "drift_detail" in out
 
 
 def test_fetcher_skips_records_already_seen() -> None:

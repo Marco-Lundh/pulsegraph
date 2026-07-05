@@ -91,3 +91,24 @@ def test_build_pipeline_returns_compiled_graph() -> None:
     graph = build_pipeline(_deps(InMemorySink()))
     # A compiled LangGraph exposes an invoke method.
     assert hasattr(graph, "invoke")
+
+
+def test_pipeline_short_circuits_on_schema_drift() -> None:
+    # A record missing a required field drifts the schema: the graph must
+    # stop at the Fetcher (ADR 0010), never analyzing or notifying.
+    sink = InMemorySink()
+    registry = DictSourceRegistry()
+    registry.register(StaticSourcePlugin(SourceKind.JOBTECH, [{"id": "1"}]))
+    deps = PipelineDeps(
+        registry=registry,
+        embedder=HashingEmbedder(),
+        model=KeywordModelClient(),
+        sink=sink,
+        cloud_available=False,
+    )
+    state = run_pipeline(deps, WATCH)
+
+    assert state["drift_detail"]
+    assert state["items"] == []
+    assert "analyses" not in state or state["analyses"] == []
+    assert sink.delivered == []

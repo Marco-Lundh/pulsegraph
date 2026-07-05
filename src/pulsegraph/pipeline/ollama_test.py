@@ -44,8 +44,8 @@ def test_embedder_returns_vector(monkeypatch) -> None:
 # --- model client ---
 
 
-def _analysis_response(payload: dict) -> _Resp:
-    return _Resp({"response": json.dumps(payload)})
+def _analysis_response(payload: dict, **extra) -> _Resp:
+    return _Resp({"response": json.dumps(payload), **extra})
 
 
 def test_model_client_parses_structured_output(monkeypatch) -> None:
@@ -75,6 +75,35 @@ def test_model_client_clamps_out_of_range_scores(monkeypatch) -> None:
 
     assert result.relevance == 1.0
     assert result.confidence == 0.0
+
+
+def test_model_client_records_token_counts(monkeypatch) -> None:
+    # Ollama reports token counts; they feed the cost ledger (ADR 0008),
+    # while the local model is free so cost stays zero.
+    payload = {"summary": "x", "relevance": 0.5, "confidence": 0.9}
+    monkeypatch.setattr(
+        ollama.httpx,
+        "post",
+        lambda *a, **k: _analysis_response(
+            payload, prompt_eval_count=120, eval_count=45
+        ),
+    )
+    result = OllamaModelClient("http://x", "m").analyze("text")
+
+    assert result.tokens_in == 120
+    assert result.tokens_out == 45
+    assert result.cost_usd == 0.0
+
+
+def test_model_client_defaults_tokens_when_absent(monkeypatch) -> None:
+    payload = {"summary": "x", "relevance": 0.5, "confidence": 0.9}
+    monkeypatch.setattr(
+        ollama.httpx, "post", lambda *a, **k: _analysis_response(payload)
+    )
+    result = OllamaModelClient("http://x", "m").analyze("text")
+
+    assert result.tokens_in == 0
+    assert result.tokens_out == 0
 
 
 def test_model_client_raises_timeout(monkeypatch) -> None:

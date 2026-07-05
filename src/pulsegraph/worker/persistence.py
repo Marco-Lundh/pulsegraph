@@ -26,10 +26,12 @@ from sqlalchemy.orm import Session
 
 from pulsegraph.db.models import (
     Analysis,
+    CostEvent,
     Evaluation,
     Item,
     Notification,
     PipelineRun,
+    SourceHealth,
     Watch,
 )
 from pulsegraph.domain.enums import (
@@ -37,9 +39,13 @@ from pulsegraph.domain.enums import (
     ModelKind,
     NotificationChannel,
     NotificationStatus,
+    PromptRole,
+    SourceKind,
+    SourceStatus,
 )
 from pulsegraph.pipeline.agents import build_notification_draft
 from pulsegraph.pipeline.contracts import EvaluationRecord
+from pulsegraph.pipeline.prompts import active_prompt_id
 from pulsegraph.pipeline.state import PipelineState
 
 
@@ -84,6 +90,37 @@ def load_dedup_memory(
     return seen, sent
 
 
+def mark_source_paused(
+    db: Session,
+    source: SourceKind,
+    detail: str,
+    *,
+    now: datetime.datetime | None = None,
+) -> None:
+    """Flag *source* as paused for schema drift (ADR 0010).
+
+    Upserts the single ``source_health`` row keyed by source: the Watcher
+    then skips triggering that source until it is resumed (manually via the
+    admin API or a plugin fix). Adds/updates the row without committing;
+    the caller owns the transaction.
+    """
+    now = now or datetime.datetime.now(datetime.UTC)
+    row = db.query(SourceHealth).filter(SourceHealth.source == source).first()
+    if row is None:
+        db.add(
+            SourceHealth(
+                source=source,
+                status=SourceStatus.PAUSED,
+                drift_detail=detail,
+                last_checked_at=now,
+            )
+        )
+        return
+    row.status = SourceStatus.PAUSED
+    row.drift_detail = detail
+    row.last_checked_at = now
+
+
 def persist_run_results(
     db: Session,
     run: PipelineRun,
@@ -108,6 +145,9 @@ def persist_run_results(
     # The Notifier already applied cross-run dedup, so its drafts are the
     # exact set of new, approved items to surface on the dashboard.
     new_keys = {draft.dedup_key for draft in state.get("notifications", [])}
+    # Pin the active analyzer prompt so every Analysis records the exact
+    # versioned prompt that produced it (ADR 0011). Resolved once per run.
+    prompt_id = active_prompt_id(db, PromptRole.ANALYZER)
 
     notified = 0
     for evaluation in state.get("evaluations", []):
@@ -124,6 +164,7 @@ def persist_run_results(
                     new_keys=new_keys,
                     now=now,
                     digest=digest,
+                    prompt_id=prompt_id,
                 )
         except IntegrityError:
             # Already stored by an earlier run; the savepoint rolled back.
@@ -146,6 +187,7 @@ def _persist_evaluation(
     new_keys: set[str],
     now: datetime.datetime,
     digest: bool = False,
+    prompt_id: uuid.UUID | None = None,
 ) -> bool:
     """Persist one evaluation's chain; return whether a notif was written."""
     analysis_record = evaluation.analysis
@@ -169,8 +211,10 @@ def _persist_evaluation(
 
     analysis = Analysis(
         item_id=item.id,
+        prompt_id=prompt_id,
         model_used=result.model,
         model_version=model_versions.get(result.model, result.model.value),
+        params=result.params,
         result=result.summary,
         confidence=result.confidence,
     )
@@ -183,6 +227,20 @@ def _persist_evaluation(
             relevance_score=result.relevance,
             confidence=result.confidence,
             status=evaluation.status,
+        )
+    )
+
+    # Record the model call in the per-user, per-run cost ledger (ADR 0008).
+    # Local calls are free (cost 0) but still logged for token volume; the
+    # global monthly cap is metered separately in Redis.
+    db.add(
+        CostEvent(
+            user_id=watch.user_id,
+            run_id=run.id,
+            model=result.model,
+            tokens_in=result.tokens_in,
+            tokens_out=result.tokens_out,
+            cost_usd=result.cost_usd,
         )
     )
 

@@ -13,6 +13,7 @@ from pulsegraph.pipeline.anthropic_client import ClaudeModelClient
 from pulsegraph.pipeline.hybrid import HybridModelClient
 from pulsegraph.pipeline.local import DictSourceRegistry, InMemorySink
 from pulsegraph.pipeline.ollama import OllamaEmbedder, OllamaModelClient
+from pulsegraph.pipeline.prompts import ensure_default_prompts
 from pulsegraph.redis_client import make_redis
 from pulsegraph.sources.entsoe import EntsoePlugin
 from pulsegraph.sources.jobtech import JobTechPlugin
@@ -76,6 +77,10 @@ async def startup(ctx: dict) -> None:
     configure_tracing(settings)
     engine = create_engine(settings.database_url)
     ctx["db_factory"] = sessionmaker(bind=engine)
+    # Ensure the analyzer/evaluator prompts exist so every Analysis can pin
+    # its versioned prompt (ADR 0011); idempotent, safe on every startup.
+    with ctx["db_factory"]() as session:
+        ensure_default_prompts(session)
     r = make_redis(settings.redis_url)
     ctx["redis"] = r
     ctx["pipeline_deps"] = _build_pipeline_deps(settings)

@@ -6,8 +6,8 @@ import uuid
 import fakeredis
 
 from pulsegraph.api._fake import FakeSession
-from pulsegraph.db.models import PipelineRun, Watch
-from pulsegraph.domain.enums import RunStatus, SourceKind
+from pulsegraph.db.models import PipelineRun, SourceHealth, Watch
+from pulsegraph.domain.enums import RunStatus, SourceKind, SourceStatus
 from pulsegraph.pipeline.agents import PipelineDeps
 from pulsegraph.pipeline.local import (
     DictSourceRegistry,
@@ -141,3 +141,20 @@ def test_run_watch_core_processes_items() -> None:
     db = FakeSession(watch)
     result = run_watch_core(db, watch, _deps(records))
     assert result["items"] == 2
+
+
+def test_run_watch_core_pauses_source_on_schema_drift() -> None:
+    # A record missing required fields drifts the source schema: the run is
+    # marked PAUSED and the source is flagged for drift (ADR 0010).
+    watch = _watch()
+    db = FakeSession(watch)
+    run_watch_core(db, watch, _deps([{"id": "1"}]))
+
+    run = db.query(PipelineRun).all()[0]
+    assert run.status == RunStatus.PAUSED
+
+    health = db.query(SourceHealth).all()
+    assert len(health) == 1
+    assert health[0].source == SourceKind.JOBTECH
+    assert health[0].status == SourceStatus.PAUSED
+    assert "did not match the expected format" in health[0].drift_detail

@@ -99,7 +99,7 @@ class ClaudeModelClient:
             messages=[{"role": "user", "content": content}],
         )
 
-        self._meter(message)
+        tokens_in, tokens_out, cost = self._meter(message)
 
         text = next(
             block.text for block in message.content if block.type == "text"
@@ -112,15 +112,25 @@ class ClaudeModelClient:
             confidence=_clamp(payload.get("confidence")),
             model=ModelKind.CLAUDE,
             labels=tuple(str(label) for label in labels),
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            cost_usd=cost,
+            # The sampling params actually sent, recorded for reproducibility
+            # (ADR 0011); temperature/top_p are left at the API defaults.
+            params={"max_tokens": self._max_tokens},
         )
 
-    def _meter(self, message: object) -> None:
-        """Add this call's USD cost to the monthly counter (ADR 0008)."""
-        if self._redis is None:
-            return
+    def _meter(self, message: object) -> tuple[int, int, float]:
+        """Price this call and add its USD cost to the monthly counter.
+
+        Returns ``(tokens_in, tokens_out, cost_usd)`` so the caller can
+        record a per-call ledger entry (ADR 0008). The monthly Redis
+        counter is only incremented when a Redis client is configured.
+        """
         usage = message.usage  # type: ignore[attr-defined]
-        cost = (
-            usage.input_tokens * self._input_cost
-            + usage.output_tokens * self._output_cost
-        )
-        increment_cost(self._redis, cost)
+        tokens_in = usage.input_tokens
+        tokens_out = usage.output_tokens
+        cost = tokens_in * self._input_cost + tokens_out * self._output_cost
+        if self._redis is not None:
+            increment_cost(self._redis, cost)
+        return tokens_in, tokens_out, cost

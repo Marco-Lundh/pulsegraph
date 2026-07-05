@@ -33,6 +33,11 @@ _AGENTS = (
 )
 
 
+def _after_fetch(state: PipelineState) -> str:
+    """Route to the paused sink on schema drift, else onward (ADR 0010)."""
+    return "paused" if state.get("drift_detail") else "continue"
+
+
 def build_pipeline(deps: PipelineDeps) -> CompiledStateGraph:
     """Wire the six agents into a compiled, runnable graph."""
     graph = StateGraph(PipelineState)
@@ -42,7 +47,16 @@ def build_pipeline(deps: PipelineDeps) -> CompiledStateGraph:
     names = [name for name, _ in _AGENTS]
     graph.add_edge(START, names[0])
     for upstream, downstream in pairwise(names):
-        graph.add_edge(upstream, downstream)
+        # The Fetcher fans out: schema drift short-circuits the run to the
+        # end (fail loud, ADR 0010); otherwise it flows to the Embedder.
+        if upstream == "fetcher":
+            graph.add_conditional_edges(
+                "fetcher",
+                _after_fetch,
+                {"continue": downstream, "paused": END},
+            )
+        else:
+            graph.add_edge(upstream, downstream)
     graph.add_edge(names[-1], END)
 
     return graph.compile()

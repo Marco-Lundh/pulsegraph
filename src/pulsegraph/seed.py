@@ -15,6 +15,7 @@ from pulsegraph.api.auth import hash_password
 from pulsegraph.config import get_settings
 from pulsegraph.db.models import PipelineRun, User, Watch
 from pulsegraph.domain.enums import RunStatus, SourceKind, UserRole
+from pulsegraph.pipeline.prompts import ensure_default_prompts
 
 _WATCHES = [
     {
@@ -71,6 +72,10 @@ def seed() -> None:
     engine = create_engine(settings.database_url)
 
     with Session(engine) as session:
+        # Always ensure the prompt registry is populated (ADR 0011), even
+        # when the demo data already exists.
+        ensure_default_prompts(session)
+
         exists = session.execute(
             text("SELECT 1 FROM users WHERE email = 'demo@pulsegraph.dev'")
         ).first()
