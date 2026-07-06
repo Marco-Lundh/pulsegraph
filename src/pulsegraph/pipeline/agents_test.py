@@ -214,7 +214,12 @@ def test_analyze_one_falls_back_to_cloud_on_low_confidence() -> None:
 
 def test_analyze_one_falls_back_on_local_timeout() -> None:
     class TimingOutClient:
-        def analyze(self, content: str, model: ModelKind) -> AnalysisResult:
+        def analyze(
+            self,
+            content: str,
+            model: ModelKind,
+            instruction: str | None = None,
+        ) -> AnalysisResult:
             if model is ModelKind.OLLAMA:
                 raise TimeoutError("slow")
             return AnalysisResult("ok", 0.9, 0.95, ModelKind.CLAUDE)
@@ -225,7 +230,12 @@ def test_analyze_one_falls_back_on_local_timeout() -> None:
 
 def test_analyze_one_reraises_timeout_without_fallback() -> None:
     class TimingOutClient:
-        def analyze(self, content: str, model: ModelKind) -> AnalysisResult:
+        def analyze(
+            self,
+            content: str,
+            model: ModelKind,
+            instruction: str | None = None,
+        ) -> AnalysisResult:
             raise TimeoutError("slow")
 
     with pytest.raises(TimeoutError):
@@ -235,7 +245,12 @@ def test_analyze_one_reraises_timeout_without_fallback() -> None:
 class _CostCappedClient:
     """Local analyses succeed; every cloud call hits the cost cap."""
 
-    def analyze(self, content: str, model: ModelKind) -> AnalysisResult:
+    def analyze(
+        self,
+        content: str,
+        model: ModelKind,
+        instruction: str | None = None,
+    ) -> AnalysisResult:
         if model is ModelKind.CLAUDE:
             raise CostCapExceededError("cap reached")
         return AnalysisResult("local", 0.4, 0.4, ModelKind.OLLAMA)
@@ -260,7 +275,12 @@ def test_analyze_one_cost_cap_falls_back_on_direct_cloud() -> None:
 
 def test_analyze_one_cost_cap_with_local_timeout_reraises() -> None:
     class TimeoutThenCapped:
-        def analyze(self, content: str, model: ModelKind) -> AnalysisResult:
+        def analyze(
+            self,
+            content: str,
+            model: ModelKind,
+            instruction: str | None = None,
+        ) -> AnalysisResult:
             if model is ModelKind.CLAUDE:
                 raise CostCapExceededError("cap reached")
             raise TimeoutError("slow")

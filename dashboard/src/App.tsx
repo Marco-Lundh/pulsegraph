@@ -20,6 +20,7 @@ import { AdminSourceHealthPage } from './pages/AdminSourceHealthPage';
 import { AdminReviewQueuePage } from './pages/AdminReviewQueuePage';
 import { AdminUsersPage } from './pages/AdminUsersPage';
 import { AdminCostsPage } from './pages/AdminCostsPage';
+import { AdminPromptsPage } from './pages/AdminPromptsPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -57,6 +58,7 @@ export default function App() {
                 <Route path="ops" element={<AdminOpsPage />} />
                 <Route path="source-health" element={<AdminSourceHealthPage />} />
                 <Route path="review-queue" element={<AdminReviewQueuePage />} />
+                <Route path="prompts" element={<AdminPromptsPage />} />
                 <Route path="costs" element={<AdminCostsPage />} />
                 <Route path="users" element={<AdminUsersPage />} />
               </Route>

@@ -74,6 +74,27 @@ def test_analyze_parses_structured_output() -> None:
     assert result.labels == ("energy",)
 
 
+def test_runtime_instruction_is_sent_as_system_prompt() -> None:
+    # ADR 0011: the active registry template is the system prompt at runtime.
+    payload = {"summary": "s", "relevance": 0.5, "confidence": 0.9}
+    fake = _FakeAnthropic(_message(payload))
+    client = ClaudeModelClient(fake, "m")
+
+    client.analyze("content", instruction="RUNTIME ANALYZER PROMPT")
+
+    assert fake.messages.kwargs["system"] == "RUNTIME ANALYZER PROMPT"
+
+
+def test_default_system_prompt_when_no_instruction() -> None:
+    from pulsegraph.pipeline.anthropic_client import _SYSTEM
+
+    payload = {"summary": "s", "relevance": 0.5, "confidence": 0.9}
+    fake = _FakeAnthropic(_message(payload))
+    ClaudeModelClient(fake, "m").analyze("content")
+
+    assert fake.messages.kwargs["system"] == _SYSTEM
+
+
 def test_analyze_meters_cost_into_redis(r) -> None:
     payload = {"summary": "s", "relevance": 0.5, "confidence": 0.9}
     fake = _FakeAnthropic(_message(payload, inp=1_000_000, out=1_000_000))

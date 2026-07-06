@@ -23,10 +23,19 @@ class HybridModelClient:
         self._local = local
         self._cloud = cloud
 
-    def analyze(self, content: str, model: ModelKind) -> AnalysisResult:
-        """Analyze ``content`` with the client for ``model``."""
+    def analyze(
+        self,
+        content: str,
+        model: ModelKind,
+        instruction: str | None = None,
+    ) -> AnalysisResult:
+        """Analyze ``content`` with the client for ``model``.
+
+        Forwards the runtime analyzer ``instruction`` (ADR 0011) to the
+        chosen client.
+        """
         if model is ModelKind.CLAUDE:
             if self._cloud is None:
                 raise RuntimeError("cloud model requested but not configured")
-            return self._cloud.analyze(content)
-        return self._local.analyze(content)
+            return self._cloud.analyze(content, instruction)
+        return self._local.analyze(content, instruction)

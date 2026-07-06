@@ -11,6 +11,7 @@ from pulsegraph.domain.enums import (
     NotificationChannel,
     NotificationFrequency,
     NotificationStatus,
+    PromptRole,
     ReviewDecision,
     RunStatus,
     SourceKind,
@@ -191,6 +192,47 @@ class ReviewDecisionCreate(BaseModel):
     decision: ReviewDecision
     corrected_label: str | None = None
     note: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Admin: prompt registry (ADR 0011)
+# ---------------------------------------------------------------------------
+
+
+class PromptOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    role: PromptRole
+    version: int
+    template: str
+    is_active: bool
+    created_at: datetime.datetime
+
+    model_config = {"from_attributes": True}
+
+
+class PromptCreate(BaseModel):
+    """Create a new version of an existing prompt (ADR 0011).
+
+    The ``role`` is derived from the existing versions of ``name`` and the
+    ``version`` is auto-incremented, so a new family can't accidentally
+    create a second active prompt for the same role. ``activate`` makes the
+    new version the one the pipeline loads at runtime.
+    """
+
+    name: str
+    template: str
+    activate: bool = True
+
+    @field_validator("template")
+    @classmethod
+    def _non_empty(cls, v: str) -> str:
+        # A blank template is truthy enough to override the client's default
+        # and would run as an empty system prompt; reject it server-side, not
+        # only in the dashboard form.
+        if not v.strip():
+            raise ValueError("template must not be empty")
+        return v
 
 
 # ---------------------------------------------------------------------------

@@ -92,6 +92,27 @@ def test_model_client_separates_instruction_from_content(monkeypatch) -> None:
     assert hostile not in messages[0]["content"]
 
 
+def test_model_client_uses_runtime_instruction(monkeypatch) -> None:
+    # ADR 0011: a runtime instruction from the registry overrides the
+    # built-in default as the system turn.
+    captured = {}
+    payload = {"summary": "x", "relevance": 0.5, "confidence": 0.5}
+
+    def fake_post(url, json, timeout):
+        captured["json"] = json
+        return _analysis_response(payload)
+
+    monkeypatch.setattr(ollama.httpx, "post", fake_post)
+    OllamaModelClient("http://x", "m").analyze(
+        "item", instruction="RUNTIME PROMPT"
+    )
+
+    assert captured["json"]["messages"][0] == {
+        "role": "system",
+        "content": "RUNTIME PROMPT",
+    }
+
+
 def test_model_client_clamps_out_of_range_scores(monkeypatch) -> None:
     payload = {"summary": "x", "relevance": 5, "confidence": -1, "labels": []}
     monkeypatch.setattr(

@@ -65,8 +65,18 @@ class KeywordModelClient:
     def __init__(self, keywords: tuple[str, ...] = ()) -> None:
         self._keywords = tuple(keyword.lower() for keyword in keywords)
 
-    def analyze(self, content: str, model: ModelKind) -> AnalysisResult:
-        """Analyze ``content`` deterministically with ``model``."""
+    def analyze(
+        self,
+        content: str,
+        model: ModelKind,
+        instruction: str | None = None,
+    ) -> AnalysisResult:
+        """Analyze ``content`` deterministically with ``model``.
+
+        Accepts the runtime ``instruction`` (ADR 0011) for port parity but
+        ignores it — this offline analyzer is a keyword heuristic, not a
+        prompt-driven model.
+        """
         first = content.strip().split(". ", 1)[0][:200]
         summary = first or "(empty)"
         relevance = min(1.0, len(content) / 600.0)

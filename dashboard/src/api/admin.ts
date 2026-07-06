@@ -71,6 +71,24 @@ export interface CostSummary {
   by_user: CostByUser[];
 }
 
+export type PromptRole = 'analyzer' | 'evaluator';
+
+export interface PromptOut {
+  id: string;
+  name: string;
+  role: PromptRole;
+  version: number;
+  template: string;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface PromptCreate {
+  name: string;
+  template: string;
+  activate?: boolean;
+}
+
 export type ReviewDecisionKind = 'approved' | 'rejected' | 'corrected';
 
 export interface ReviewDecisionCreate {
@@ -98,6 +116,12 @@ export const adminApi = {
   users: (): Promise<UserOut[]> => api.get<UserOut[]>('/admin/users'),
   deleteUser: (userId: string): Promise<void> =>
     api.delete<void>(`/admin/users/${userId}`),
+  prompts: (): Promise<PromptOut[]> =>
+    api.get<PromptOut[]>('/admin/prompts'),
+  createPrompt: (body: PromptCreate): Promise<PromptOut> =>
+    api.post<PromptOut>('/admin/prompts', body),
+  activatePrompt: (id: string): Promise<PromptOut> =>
+    api.post<PromptOut>(`/admin/prompts/${id}/activate`, {}),
 };
 
 export function countOpsAlerts(ops: OpsSummary): number {
