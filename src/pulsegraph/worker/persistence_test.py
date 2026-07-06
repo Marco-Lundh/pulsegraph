@@ -15,6 +15,7 @@ from pulsegraph.db.models import (
     SourceHealth,
     Watch,
 )
+from pulsegraph.domain.constants import EMBEDDING_DIM
 from pulsegraph.domain.enums import (
     EvalStatus,
     ModelKind,
@@ -32,12 +33,33 @@ from pulsegraph.pipeline.contracts import (
 )
 from pulsegraph.sources.base import FetchedItem
 from pulsegraph.worker.persistence import (
+    _validated_embedding,
     load_dedup_memory,
     mark_source_paused,
     persist_run_results,
 )
 
 _NOW = datetime.datetime.now(datetime.UTC)
+
+
+# --- embedding dimension guard (ADR 0014) ---
+
+
+def test_validated_embedding_passes_correct_dimension() -> None:
+    vector = [0.0] * EMBEDDING_DIM
+    assert _validated_embedding(vector) is vector
+
+
+def test_validated_embedding_drops_wrong_dimension() -> None:
+    # A model swap producing a different dimension is dropped, not stored,
+    # so the run survives and the re-embed job can backfill it.
+    assert _validated_embedding([0.0] * (EMBEDDING_DIM + 128)) is None
+
+
+def test_validated_embedding_passes_none() -> None:
+    assert _validated_embedding(None) is None
+
+
 _MODEL_VERSIONS = {
     ModelKind.OLLAMA: "llama3.1:8b",
     ModelKind.CLAUDE: "claude-opus-4-8",

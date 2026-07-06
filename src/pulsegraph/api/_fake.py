@@ -43,6 +43,10 @@ class _FakeQuery:
     def order_by(self, *_args: Any) -> "_FakeQuery":
         return self
 
+    def limit(self, *_args: Any) -> "_FakeQuery":
+        # No-op like filter: callers pre-load only the rows a test needs.
+        return self
+
     def all(self) -> list:
         return self._items
 

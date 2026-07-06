@@ -28,6 +28,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from pulsegraph.db.base import Base
 from pulsegraph.domain import enums
+from pulsegraph.domain.constants import EMBEDDING_DIM
 
 # --- column helpers ---
 
@@ -238,7 +239,9 @@ class Item(Base):
     external_id: Mapped[str | None] = mapped_column(Text)
     raw_payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
     content_hash: Mapped[str] = mapped_column(Text, nullable=False)
-    embedding: Mapped[list[float] | None] = mapped_column(Vector(768))
+    embedding: Mapped[list[float] | None] = mapped_column(
+        Vector(EMBEDDING_DIM)
+    )
     embedding_model: Mapped[str | None] = mapped_column(Text)
     fetched_at: Mapped[datetime.datetime] = _created_at()
 
