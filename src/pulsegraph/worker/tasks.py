@@ -102,6 +102,9 @@ def run_watch_core(
                 spec,
                 seen_hashes=seen_hashes,
                 sent_dedup_keys=sent_dedup_keys,
+                # Key this run's checkpoints by its run id so its persisted
+                # state is retrievable on its own (ADR 0001).
+                thread_id=str(run.id),
             )
         drift_detail = state.get("drift_detail")
         if drift_detail:

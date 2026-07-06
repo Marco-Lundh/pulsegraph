@@ -96,3 +96,17 @@ def test_validate_secrets_accepts_strong_secret_in_prod() -> None:
     )
 
     settings.validate_production_secrets()
+
+
+# --- checkpointer backend (ADR 0001) ---
+
+
+def test_checkpointer_backend_defaults_to_none() -> None:
+    assert _settings().checkpointer_backend == "none"
+
+
+def test_unknown_checkpointer_backend_is_rejected() -> None:
+    # A Literal type fails fast at config load, consistently for every
+    # process, instead of only crashing the worker later.
+    with pytest.raises(ValueError):
+        _settings(CHECKPOINTER_BACKEND="postgress")

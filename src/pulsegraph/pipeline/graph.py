@@ -39,7 +39,12 @@ def _after_fetch(state: PipelineState) -> str:
 
 
 def build_pipeline(deps: PipelineDeps) -> CompiledStateGraph:
-    """Wire the six agents into a compiled, runnable graph."""
+    """Wire the six agents into a compiled, runnable graph.
+
+    Compiled with ``deps.checkpointer`` when one is configured (ADR 0001),
+    so the graph state is persisted after each super-step; ``None`` compiles
+    a plain graph exactly as before (local-first default).
+    """
     graph = StateGraph(PipelineState)
     for name, factory in _AGENTS:
         graph.add_node(name, factory(deps))
@@ -59,7 +64,7 @@ def build_pipeline(deps: PipelineDeps) -> CompiledStateGraph:
             graph.add_edge(upstream, downstream)
     graph.add_edge(names[-1], END)
 
-    return graph.compile()
+    return graph.compile(checkpointer=deps.checkpointer)
 
 
 def run_pipeline(
@@ -68,12 +73,17 @@ def run_pipeline(
     *,
     seen_hashes: set[str] | None = None,
     sent_dedup_keys: set[str] | None = None,
+    thread_id: str | None = None,
 ) -> PipelineState:
     """Run one watch end to end and return the final state.
 
     ``seen_hashes`` and ``sent_dedup_keys`` carry cross-run memory; in
     production they are loaded from the database so deduplication and
     delivery stay idempotent across runs (ADR 0003, ADR 0016).
+
+    ``thread_id`` (the run id in production) namespaces the run's checkpoints
+    when a checkpointer is configured (ADR 0001), so each run's persisted
+    state is retrievable on its own. Ignored when no checkpointer is set.
     """
     initial: PipelineState = {
         "watch": watch,
@@ -81,4 +91,9 @@ def run_pipeline(
         "sent_dedup_keys": sent_dedup_keys or set(),
         "errors": [],
     }
-    return build_pipeline(deps).invoke(initial)
+    # A checkpointer requires a thread id on invoke; without one, no config
+    # is needed and the graph runs statelessly as before.
+    config = None
+    if deps.checkpointer is not None:
+        config = {"configurable": {"thread_id": thread_id or "run"}}
+    return build_pipeline(deps).invoke(initial, config)

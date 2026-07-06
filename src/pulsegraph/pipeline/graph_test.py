@@ -1,7 +1,12 @@
 """End-to-end tests for the assembled agent graph."""
 
+from dataclasses import replace
+
+from langgraph.checkpoint.memory import MemorySaver
+
 from pulsegraph.domain.enums import EvalStatus, ModelKind, SourceKind
 from pulsegraph.pipeline.agents import PipelineDeps
+from pulsegraph.pipeline.checkpointer import checkpoint_history
 from pulsegraph.pipeline.contracts import WatchSpec
 from pulsegraph.pipeline.graph import build_pipeline, run_pipeline
 from pulsegraph.pipeline.local import (
@@ -91,6 +96,20 @@ def test_build_pipeline_returns_compiled_graph() -> None:
     graph = build_pipeline(_deps(InMemorySink()))
     # A compiled LangGraph exposes an invoke method.
     assert hasattr(graph, "invoke")
+
+
+def test_pipeline_checkpoints_state_when_checkpointer_configured() -> None:
+    # ADR 0001: with a checkpointer the graph persists its state at each
+    # super-step, retrievable by the run's thread id (time-travel).
+    checkpointer = MemorySaver()
+    deps = replace(_deps(InMemorySink()), checkpointer=checkpointer)
+
+    run_pipeline(deps, WATCH, thread_id="run-abc")
+
+    history = checkpoint_history(checkpointer, "run-abc")
+    assert len(history) > 0
+    # A different run's checkpoints are namespaced separately.
+    assert checkpoint_history(checkpointer, "other-run") == []
 
 
 def test_pipeline_short_circuits_on_schema_drift() -> None:

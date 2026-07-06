@@ -6,6 +6,7 @@ local Ollama model, and never calls a cloud service.
 """
 
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -74,6 +75,19 @@ class Settings(BaseSettings):
         default=_DEFAULT_JWT_SECRET, alias="JWT_SECRET_KEY"
     )
     jwt_expire_hours: int = Field(default=24, alias="JWT_EXPIRE_HOURS")
+
+    # Graph state checkpointing (ADR 0001). "none" (local-first default,
+    # no overhead) compiles the graph without a checkpointer; "memory" keeps
+    # per-process checkpoints (dev/debug); "postgres" persists every run's
+    # graph state durably so it survives a restart and can be inspected /
+    # replayed (time-travel, rollback). The Postgres saver manages its own
+    # checkpoint tables via its setup() — not Alembic.
+    checkpointer_backend: Literal["none", "memory", "postgres"] = Field(
+        default="none", alias="CHECKPOINTER_BACKEND"
+    )
+    checkpointer_pool_size: int = Field(
+        default=4, alias="CHECKPOINTER_POOL_SIZE"
+    )
 
     langsmith_enabled: bool = Field(default=False, alias="LANGSMITH_ENABLED")
     langsmith_api_key: str = Field(default="", alias="LANGSMITH_API_KEY")

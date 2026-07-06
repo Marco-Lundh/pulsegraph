@@ -11,6 +11,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 
 import redis as redis_lib
+from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from pulsegraph.domain.enums import EvalStatus, ModelKind
 from pulsegraph.pipeline.contracts import (
@@ -59,6 +60,10 @@ class PipelineDeps:
     # runtime (ADR 0011), injected per run. None → the model client uses its
     # built-in default (offline/tests).
     analyzer_instruction: str | None = None
+    # Graph state checkpointer (ADR 0001). None → the graph compiles without
+    # one (local-first default); the worker injects a durable saver when
+    # configured so each run's state is persisted and inspectable.
+    checkpointer: BaseCheckpointSaver | None = None
 
 
 def watcher_node(deps: PipelineDeps) -> Node:
