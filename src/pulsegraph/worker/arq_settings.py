@@ -10,6 +10,7 @@ from pulsegraph.config import get_settings
 from pulsegraph.observability import configure_tracing
 from pulsegraph.pipeline.agents import PipelineDeps
 from pulsegraph.pipeline.anthropic_client import ClaudeModelClient
+from pulsegraph.pipeline.checkpointer import build_checkpointer
 from pulsegraph.pipeline.hybrid import HybridModelClient
 from pulsegraph.pipeline.local import DictSourceRegistry, InMemorySink
 from pulsegraph.pipeline.ollama import OllamaEmbedder, OllamaModelClient
@@ -27,11 +28,12 @@ from pulsegraph.worker.scheduler import enqueue_due_watches
 from pulsegraph.worker.tasks import run_watch
 
 
-def _build_pipeline_deps(settings) -> PipelineDeps:
+def _build_pipeline_deps(settings, checkpointer=None) -> PipelineDeps:
     """Wire the pipeline to real local/cloud adapters (ADR 0002).
 
     The notification sink is a placeholder here; ``worker.tasks`` swaps in
-    a per-run sink bound to the run's DB session (ADR 0016).
+    a per-run sink bound to the run's DB session (ADR 0016). ``checkpointer``
+    persists each run's graph state when configured (ADR 0001).
     """
     registry = DictSourceRegistry()
     registry.register(JobTechPlugin())
@@ -69,6 +71,7 @@ def _build_pipeline_deps(settings) -> PipelineDeps:
         cloud_available=settings.cloud_model_available,
         redis_client=r,
         fetch_cache_ttl=settings.fetch_cache_ttl_seconds,
+        checkpointer=checkpointer,
     )
 
 
@@ -88,11 +91,17 @@ async def startup(ctx: dict) -> None:
         ensure_default_prompts(session)
     r = make_redis(settings.redis_url)
     ctx["redis"] = r
-    ctx["pipeline_deps"] = _build_pipeline_deps(settings)
+    # Build the graph state checkpointer once (ADR 0001); persist a handle to
+    # release its resources (the Postgres pool) at shutdown.
+    checkpointer, close_checkpointer = build_checkpointer(settings)
+    ctx["checkpointer_close"] = close_checkpointer
+    ctx["pipeline_deps"] = _build_pipeline_deps(settings, checkpointer)
 
 
 async def shutdown(ctx: dict) -> None:
-    pass
+    close = ctx.get("checkpointer_close")
+    if close is not None:
+        close()
 
 
 class WorkerSettings:
