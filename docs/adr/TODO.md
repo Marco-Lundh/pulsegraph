@@ -43,12 +43,9 @@ harder-scoped work.)
   checkpointer, so the ADR's state persistence / time-travel / rollback
   are not available at runtime.
 
-- **Prompt registry is provenance-only (ADR 0011).** Every `Analysis` now
-  pins the active analyzer `prompt_id` and records its `params`, and the
-  local client's template is seeded from the same constant it runs. The
-  model clients still hold their prompt text in code rather than loading
-  the active template from the registry at runtime, and there is no CRUD /
-  admin surface for editing or versioning prompts.
+  (ADR 0011 — prompt registry — is now closed: the analyzer loads the
+  active template from the registry at runtime, and an admin Prompts tab
+  edits/versions/activates prompts.)
 
 ## Larger deferred work
 

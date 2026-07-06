@@ -4,6 +4,7 @@ const tabs = [
   { to: 'ops', label: 'Ops' },
   { to: 'source-health', label: 'Source health' },
   { to: 'review-queue', label: 'Review queue' },
+  { to: 'prompts', label: 'Prompts' },
   { to: 'costs', label: 'Costs' },
   { to: 'users', label: 'Users' },
 ];

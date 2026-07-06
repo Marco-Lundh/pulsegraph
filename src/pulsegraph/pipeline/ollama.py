@@ -72,12 +72,17 @@ class OllamaModelClient:
         self._model = model
         self._timeout = timeout
 
-    def analyze(self, content: str) -> AnalysisResult:
+    def analyze(
+        self, content: str, instruction: str | None = None
+    ) -> AnalysisResult:
         """Analyze ``content`` with the local model.
 
-        Raises ``TimeoutError`` if the model does not answer in time, so
-        the Analyzer can fall back to the cloud model (ADR 0002).
+        ``instruction`` is the active analyzer template loaded from the
+        registry at runtime (ADR 0011); falls back to ``ANALYZER_TEMPLATE``
+        when None. Raises ``TimeoutError`` if the model does not answer in
+        time, so the Analyzer can fall back to the cloud model (ADR 0002).
         """
+        system = instruction or ANALYZER_TEMPLATE
         try:
             # Instruction/data separation (ADR 0013): the analyzer
             # instruction is the system turn; the untrusted item is a
@@ -88,7 +93,7 @@ class OllamaModelClient:
                 json={
                     "model": self._model,
                     "messages": [
-                        {"role": "system", "content": ANALYZER_TEMPLATE},
+                        {"role": "system", "content": system},
                         {"role": "user", "content": content},
                     ],
                     "format": "json",

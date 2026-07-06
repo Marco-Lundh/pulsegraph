@@ -11,11 +11,12 @@ from sqlalchemy.orm import Session
 
 from pulsegraph.config import get_settings
 from pulsegraph.db.models import PipelineRun, Watch
-from pulsegraph.domain.enums import ModelKind, RunStatus
+from pulsegraph.domain.enums import ModelKind, PromptRole, RunStatus
 from pulsegraph.observability import traced_run
 from pulsegraph.pipeline.agents import PipelineDeps
 from pulsegraph.pipeline.contracts import WatchSpec
 from pulsegraph.pipeline.graph import run_pipeline
+from pulsegraph.pipeline.prompts import active_prompt_template
 from pulsegraph.redis_client import check_rate
 from pulsegraph.worker.digest import user_wants_digest
 from pulsegraph.worker.persistence import (
@@ -81,8 +82,15 @@ def run_watch_core(
     seen_hashes, sent_dedup_keys = load_dedup_memory(
         db, watch.user_id, lookback_days=settings.dedup_lookback_days
     )
-    # Bind the notification channels to this run's session (ADR 0016).
-    run_deps = replace(deps, sink=build_notification_sink(settings, db))
+    # Bind the notification channels to this run's session (ADR 0016) and
+    # load the active analyzer instruction from the registry so an admin's
+    # edit takes effect at runtime (ADR 0011); None falls back to the
+    # client's built-in default.
+    run_deps = replace(
+        deps,
+        sink=build_notification_sink(settings, db),
+        analyzer_instruction=active_prompt_template(db, PromptRole.ANALYZER),
+    )
 
     try:
         # Trace the LangGraph execution to LangSmith when enabled; the

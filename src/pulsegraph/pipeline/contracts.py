@@ -115,8 +115,19 @@ class Embedder(Protocol):
 class ModelClient(Protocol):
     """Runs an analysis on one model class (ADR 0002)."""
 
-    def analyze(self, content: str, model: ModelKind) -> AnalysisResult:
-        """Analyze ``content`` with the given model class."""
+    def analyze(
+        self,
+        content: str,
+        model: ModelKind,
+        instruction: str | None = None,
+    ) -> AnalysisResult:
+        """Analyze ``content`` with the given model class.
+
+        ``instruction`` is the analyzer instruction to run — the active
+        template loaded from the prompt registry at runtime (ADR 0011).
+        When None the client falls back to its built-in default so offline
+        adapters and tests need no registry.
+        """
 
 
 @runtime_checkable

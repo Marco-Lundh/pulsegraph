@@ -93,11 +93,37 @@ def ensure_default_prompts(db: Session) -> int:
     return added
 
 
+def _active_prompt(db: Session, role: PromptRole) -> Prompt | None:
+    """Return the active prompt row for *role*, or None if unseeded.
+
+    Filtered in Python too so it is correct under the FakeSession test
+    double, whose ``filter`` is a no-op (mirrors ``worker.scheduler``).
+    """
+    return next(
+        (
+            row
+            for row in db.query(Prompt)
+            .filter(Prompt.role == role, Prompt.is_active.is_(True))
+            .all()
+            if row.role == role and row.is_active
+        ),
+        None,
+    )
+
+
 def active_prompt_id(db: Session, role: PromptRole) -> uuid.UUID | None:
     """Return the id of the active prompt for *role*, or None if unseeded."""
-    row = (
-        db.query(Prompt)
-        .filter(Prompt.role == role, Prompt.is_active.is_(True))
-        .first()
-    )
+    row = _active_prompt(db, role)
     return row.id if row is not None else None
+
+
+def active_prompt_template(db: Session, role: PromptRole) -> str | None:
+    """Return the active prompt template text for *role* (ADR 0011).
+
+    Loaded at runtime so an admin editing/activating a prompt version
+    changes what the analyzer actually runs, instead of the text being
+    pinned in code. None when the registry is unseeded — callers then fall
+    back to their built-in default.
+    """
+    row = _active_prompt(db, role)
+    return row.template if row is not None else None

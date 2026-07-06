@@ -75,11 +75,16 @@ class ClaudeModelClient:
         self._output_cost = output_cost_per_token
         self._max_tokens = max_tokens
 
-    def analyze(self, content: str) -> AnalysisResult:
+    def analyze(
+        self, content: str, instruction: str | None = None
+    ) -> AnalysisResult:
         """Analyze ``content`` with Claude.
 
-        Raises ``CostCapExceededError`` before making any request once the
-        monthly cost cap is reached (ADR 0008).
+        ``instruction`` is the active analyzer template loaded from the
+        registry at runtime (ADR 0011), sent as the system prompt; falls
+        back to ``_SYSTEM`` when None. Raises ``CostCapExceededError``
+        before making any request once the monthly cost cap is reached
+        (ADR 0008).
         """
         if (
             self._redis is not None
@@ -92,7 +97,7 @@ class ClaudeModelClient:
         message = self._client.messages.create(
             model=self._model,
             max_tokens=self._max_tokens,
-            system=_SYSTEM,
+            system=instruction or _SYSTEM,
             output_config={
                 "format": {"type": "json_schema", "schema": _OUTPUT_SCHEMA}
             },

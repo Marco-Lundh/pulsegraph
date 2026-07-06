@@ -7,6 +7,7 @@ from pulsegraph.pipeline.prompts import (
     ANALYZER_PROMPT_NAME,
     ANALYZER_TEMPLATE,
     active_prompt_id,
+    active_prompt_template,
     ensure_default_prompts,
 )
 
@@ -42,3 +43,37 @@ def test_active_prompt_id_returns_seeded_analyzer() -> None:
 
 def test_active_prompt_id_none_when_unseeded() -> None:
     assert active_prompt_id(FakeSession(), PromptRole.ANALYZER) is None
+
+
+def test_active_prompt_template_returns_active_text() -> None:
+    # ADR 0011: the analyzer runs the active registry template at runtime.
+    db = FakeSession()
+    ensure_default_prompts(db)
+    assert active_prompt_template(db, PromptRole.ANALYZER) == ANALYZER_TEMPLATE
+
+
+def test_active_prompt_template_none_when_unseeded() -> None:
+    assert active_prompt_template(FakeSession(), PromptRole.ANALYZER) is None
+
+
+def test_active_prompt_template_reflects_a_newer_active_version() -> None:
+    # An admin-activated newer version is what the analyzer picks up.
+    db = FakeSession()
+    ensure_default_prompts(db)
+    analyzer = next(
+        p for p in db.query(Prompt).all() if p.name == ANALYZER_PROMPT_NAME
+    )
+    analyzer.is_active = False
+    db.add(
+        Prompt(
+            name=ANALYZER_PROMPT_NAME,
+            role=PromptRole.ANALYZER,
+            version=2,
+            template="EDITED analyzer instruction",
+            is_active=True,
+        )
+    )
+    assert (
+        active_prompt_template(db, PromptRole.ANALYZER)
+        == "EDITED analyzer instruction"
+    )

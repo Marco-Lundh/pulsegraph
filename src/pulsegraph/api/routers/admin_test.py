@@ -8,6 +8,7 @@ from pulsegraph.db.models import (
     AuditLogEntry,
     CostEvent,
     Evaluation,
+    Prompt,
     ReviewDecision,
     SourceHealth,
     User,
@@ -15,6 +16,7 @@ from pulsegraph.db.models import (
 from pulsegraph.domain.enums import (
     EvalStatus,
     ModelKind,
+    PromptRole,
     SourceKind,
     SourceStatus,
     UserRole,
@@ -177,6 +179,137 @@ def test_non_admin_cannot_access_eval_health() -> None:
     client, _, _ = make_client()
     resp = client.get("/admin/eval-health")
     assert resp.status_code == 403
+
+
+# --- prompt registry (ADR 0011) ---
+
+
+def _prompt(
+    name: str = "analyzer",
+    version: int = 1,
+    *,
+    is_active: bool = True,
+    template: str = "v1 instruction",
+    role: PromptRole = PromptRole.ANALYZER,
+) -> Prompt:
+    return Prompt(
+        id=uuid.uuid4(),
+        name=name,
+        role=role,
+        version=version,
+        template=template,
+        is_active=is_active,
+        created_at=_NOW,
+    )
+
+
+def test_admin_can_list_prompts() -> None:
+    admin = _make_user(UserRole.ADMIN)
+    db = FakeSession(
+        admin, _prompt(version=1, is_active=False), _prompt(version=2)
+    )
+    client, _, _ = make_client(db=db, user=admin)
+
+    resp = client.get("/admin/prompts")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) == 2
+    # Newest version first within a name.
+    assert body[0]["version"] == 2
+
+
+def test_non_admin_cannot_access_prompts() -> None:
+    client, _, _ = make_client()
+    assert client.get("/admin/prompts").status_code == 403
+
+
+def test_admin_create_prompt_adds_active_version() -> None:
+    admin = _make_user(UserRole.ADMIN)
+    current = _prompt(version=1, is_active=True, template="old")
+    db = FakeSession(admin, current)
+    client, _, _ = make_client(db=db, user=admin)
+
+    resp = client.post(
+        "/admin/prompts",
+        json={"name": "analyzer", "template": "new instruction"},
+    )
+
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["version"] == 2
+    assert body["is_active"] is True
+    assert body["role"] == "analyzer"  # inherited from the existing name
+    # The previously active version is deactivated.
+    assert current.is_active is False
+    # The action is audit-logged.
+    actions = [e.action for e in db.query(AuditLogEntry).all()]
+    assert "prompt.create" in actions
+
+
+def test_admin_create_prompt_draft_without_activating() -> None:
+    admin = _make_user(UserRole.ADMIN)
+    current = _prompt(version=1, is_active=True)
+    db = FakeSession(admin, current)
+    client, _, _ = make_client(db=db, user=admin)
+
+    resp = client.post(
+        "/admin/prompts",
+        json={"name": "analyzer", "template": "draft", "activate": False},
+    )
+
+    assert resp.status_code == 201
+    assert resp.json()["is_active"] is False
+    # The active version is untouched.
+    assert current.is_active is True
+
+
+def test_create_prompt_rejects_blank_template() -> None:
+    admin = _make_user(UserRole.ADMIN)
+    db = FakeSession(admin, _prompt(version=1))
+    client, _, _ = make_client(db=db, user=admin)
+
+    resp = client.post(
+        "/admin/prompts",
+        json={"name": "analyzer", "template": "   "},
+    )
+
+    assert resp.status_code == 422
+
+
+def test_create_prompt_unknown_name_returns_400() -> None:
+    admin = _make_user(UserRole.ADMIN)
+    db = FakeSession(admin)
+    client, _, _ = make_client(db=db, user=admin)
+
+    resp = client.post(
+        "/admin/prompts",
+        json={"name": "does-not-exist", "template": "x"},
+    )
+
+    assert resp.status_code == 400
+
+
+def test_admin_activate_prompt_switches_active_version() -> None:
+    admin = _make_user(UserRole.ADMIN)
+    v1 = _prompt(version=1, is_active=True)
+    v2 = _prompt(version=2, is_active=False)
+    db = FakeSession(admin, v1, v2)
+    client, _, _ = make_client(db=db, user=admin)
+
+    resp = client.post(f"/admin/prompts/{v2.id}/activate")
+
+    assert resp.status_code == 200
+    assert v2.is_active is True
+    assert v1.is_active is False
+
+
+def test_activate_unknown_prompt_returns_404() -> None:
+    admin = _make_user(UserRole.ADMIN)
+    db = FakeSession(admin)
+    client, _, _ = make_client(db=db, user=admin)
+    resp = client.post(f"/admin/prompts/{uuid.uuid4()}/activate")
+    assert resp.status_code == 404
 
 
 # --- cost ledger ---

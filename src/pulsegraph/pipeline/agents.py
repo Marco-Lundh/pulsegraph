@@ -55,6 +55,10 @@ class PipelineDeps:
     relevance_threshold: float = RELEVANCE_NOTIFY_THRESHOLD
     redis_client: redis_lib.Redis | None = None
     fetch_cache_ttl: int = 900
+    # The active analyzer instruction loaded from the prompt registry at
+    # runtime (ADR 0011), injected per run. None → the model client uses its
+    # built-in default (offline/tests).
+    analyzer_instruction: str | None = None
 
 
 def watcher_node(deps: PipelineDeps) -> Node:
@@ -159,17 +163,24 @@ def _analyze_one(deps: PipelineDeps, content: str) -> AnalysisResult:
     complexity = classify_complexity(content)
     model = choose_model(complexity, deps.cloud_available)
 
+    def analyze(kind: ModelKind) -> AnalysisResult:
+        # Run with the active analyzer instruction from the registry (ADR
+        # 0011); the client falls back to its default when it is None.
+        return deps.model.analyze(
+            content, kind, instruction=deps.analyzer_instruction
+        )
+
     if model is ModelKind.CLAUDE:
         # Complex item routed straight to the cloud; on a cost cap, fall
         # back to the local model rather than dropping the item.
         try:
-            return deps.model.analyze(content, ModelKind.CLAUDE)
+            return analyze(ModelKind.CLAUDE)
         except CostCapExceededError:
-            return deps.model.analyze(content, ModelKind.OLLAMA)
+            return analyze(ModelKind.OLLAMA)
 
     timed_out = False
     try:
-        result = deps.model.analyze(content, ModelKind.OLLAMA)
+        result = analyze(ModelKind.OLLAMA)
     except TimeoutError:
         result = None
         timed_out = True
@@ -182,7 +193,7 @@ def _analyze_one(deps: PipelineDeps, content: str) -> AnalysisResult:
         deps.confidence_threshold,
     ):
         try:
-            return deps.model.analyze(content, ModelKind.CLAUDE)
+            return analyze(ModelKind.CLAUDE)
         except CostCapExceededError:
             if result is not None:
                 return result

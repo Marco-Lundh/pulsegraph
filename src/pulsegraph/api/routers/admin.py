@@ -11,6 +11,8 @@ from pulsegraph.api.deps import get_db, require_admin
 from pulsegraph.api.eval_health import eval_health_summary
 from pulsegraph.api.health import operational_summary
 from pulsegraph.api.schemas import (
+    PromptCreate,
+    PromptOut,
     ReviewDecisionCreate,
     SourceHealthOut,
     UserOut,
@@ -19,6 +21,7 @@ from pulsegraph.config import get_settings
 from pulsegraph.db.models import (
     AuditLogEntry,
     Evaluation,
+    Prompt,
     ReviewDecision,
     SourceHealth,
     User,
@@ -111,6 +114,124 @@ def cost_ledger(
     monthly spend vs the cap.
     """
     return cost_summary(db, datetime.datetime.now(datetime.UTC))
+
+
+# ---------------------------------------------------------------------------
+# Prompt registry (ADR 0011)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/prompts", response_model=list[PromptOut])
+def list_prompts(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_admin),
+) -> list[Prompt]:
+    """List every prompt version, newest version first within each name."""
+    rows = db.query(Prompt).all()
+    return sorted(rows, key=lambda p: (p.name, -p.version))
+
+
+@router.post(
+    "/prompts",
+    response_model=PromptOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_prompt(
+    body: PromptCreate,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+) -> Prompt:
+    """Create a new version of an existing prompt (ADR 0011).
+
+    The role is inherited from the prompt's existing versions and the
+    version number is auto-incremented, so a new active prompt can never be
+    created for a role that already has one. When ``activate`` is set, the
+    currently active version of the same name is deactivated first (the
+    partial unique index allows only one active version per name).
+    """
+    # Filtered in Python too (FakeSession filter is a no-op).
+    existing = [
+        p
+        for p in db.query(Prompt).filter(Prompt.name == body.name).all()
+        if p.name == body.name
+    ]
+    if not existing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unknown prompt name: {body.name}",
+        )
+    role = existing[0].role
+    next_version = max(p.version for p in existing) + 1
+    if body.activate:
+        for p in existing:
+            if p.is_active:
+                p.is_active = False
+        # Flush the deactivation before the new active row so the one-active-
+        # per-name unique index is never momentarily violated.
+        db.flush()
+    prompt = Prompt(
+        name=body.name,
+        role=role,
+        version=next_version,
+        template=body.template,
+        is_active=body.activate,
+    )
+    db.add(prompt)
+    db.flush()
+    db.add(
+        AuditLogEntry(
+            actor_user_id=admin.id,
+            action="prompt.create",
+            entity_type="prompt",
+            entity_id=prompt.id,
+            meta={
+                "name": body.name,
+                "version": next_version,
+                "activated": body.activate,
+            },
+        )
+    )
+    db.commit()
+    db.refresh(prompt)
+    return prompt
+
+
+@router.post("/prompts/{prompt_id}/activate", response_model=PromptOut)
+def activate_prompt(
+    prompt_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+) -> Prompt:
+    """Make a prompt version the active one for its name (ADR 0011).
+
+    Deactivates the other versions of the same name first so the pipeline
+    loads exactly this template at runtime.
+    """
+    target = db.get(Prompt, prompt_id)
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    siblings = [
+        p
+        for p in db.query(Prompt).filter(Prompt.name == target.name).all()
+        if p.name == target.name and p.id != target.id
+    ]
+    for p in siblings:
+        if p.is_active:
+            p.is_active = False
+    db.flush()
+    target.is_active = True
+    db.add(
+        AuditLogEntry(
+            actor_user_id=admin.id,
+            action="prompt.activate",
+            entity_type="prompt",
+            entity_id=target.id,
+            meta={"name": target.name, "version": target.version},
+        )
+    )
+    db.commit()
+    db.refresh(target)
+    return target
 
 
 @router.get("/review-queue")
