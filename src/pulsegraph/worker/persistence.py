@@ -18,6 +18,7 @@ instead of failing.
 """
 
 import datetime
+import logging
 import uuid
 
 from sqlalchemy import or_
@@ -34,6 +35,7 @@ from pulsegraph.db.models import (
     SourceHealth,
     Watch,
 )
+from pulsegraph.domain.constants import EMBEDDING_DIM
 from pulsegraph.domain.enums import (
     EvalStatus,
     ModelKind,
@@ -47,6 +49,28 @@ from pulsegraph.pipeline.agents import build_notification_draft
 from pulsegraph.pipeline.contracts import EvaluationRecord
 from pulsegraph.pipeline.prompts import active_prompt_id
 from pulsegraph.pipeline.state import PipelineState
+from pulsegraph.worker.similarity import find_similar_items
+
+logger = logging.getLogger(__name__)
+
+
+def _validated_embedding(vector: list[float] | None) -> list[float] | None:
+    """Drop an embedding whose dimension doesn't match the stored column.
+
+    An embedding-model swap that changes the vector dimension would
+    otherwise fail the insert or silently corrupt dedup/similarity (ADR
+    0014). We store ``None`` instead and log it, so the run still succeeds
+    and the re-embed job (:mod:`pulsegraph.worker.reembed`) can fill the
+    vector in later against the correct model.
+    """
+    if vector is not None and len(vector) != EMBEDDING_DIM:
+        logger.warning(
+            "dropping embedding with dim %d (expected %d)",
+            len(vector),
+            EMBEDDING_DIM,
+        )
+        return None
+    return vector
 
 
 def load_dedup_memory(
@@ -131,6 +155,7 @@ def persist_run_results(
     model_versions: dict[ModelKind, str],
     now: datetime.datetime | None = None,
     digest: bool = False,
+    similarity_threshold: float = 1.0,
 ) -> int:
     """Write the run's items, analyses, evaluations and notifications.
 
@@ -139,6 +164,12 @@ def persist_run_results(
     transaction. When *digest* is true the notification is recorded
     ``PENDING`` (queued for the daily digest job, ADR 0016) instead of
     ``SENT``; instant delivery already happened in the Notifier node.
+
+    ``similarity_threshold`` (0-1) enables semantic dedup (ADR 0014): a new
+    item whose vector is at least this cosine-similar to one from an earlier
+    run is still persisted but not re-notified. The default 1.0 disables it
+    (only an exact-distance match would suppress); the worker passes the
+    configured threshold.
     """
     now = now or datetime.datetime.now(datetime.UTC)
     embeddings = state.get("embeddings", {})
@@ -165,6 +196,7 @@ def persist_run_results(
                     now=now,
                     digest=digest,
                     prompt_id=prompt_id,
+                    similarity_threshold=similarity_threshold,
                 )
         except IntegrityError:
             # Already stored by an earlier run; the savepoint rolled back.
@@ -188,6 +220,7 @@ def _persist_evaluation(
     now: datetime.datetime,
     digest: bool = False,
     prompt_id: uuid.UUID | None = None,
+    similarity_threshold: float = 1.0,
 ) -> bool:
     """Persist one evaluation's chain; return whether a notif was written."""
     analysis_record = evaluation.analysis
@@ -203,7 +236,7 @@ def _persist_evaluation(
         external_id=fetched.external_id,
         raw_payload=fetched.raw,
         content_hash=content_hash,
-        embedding=embeddings.get(content_hash),
+        embedding=_validated_embedding(embeddings.get(content_hash)),
         embedding_model=embedding_model,
     )
     db.add(item)
@@ -245,6 +278,26 @@ def _persist_evaluation(
     )
 
     if evaluation.status is not EvalStatus.APPROVED:
+        return False
+    # Semantic dedup (ADR 0014): if a same-model near-duplicate from an
+    # earlier run is already stored for this user, keep the item for
+    # provenance but suppress its dashboard notification — a reworded repost
+    # has a different content hash (so the exact-hash dedup misses it) but a
+    # near-identical vector. Excludes this run so the item never matches
+    # itself or its batch siblings. Scope: this suppresses the persisted
+    # dashboard channel; instant email/webhook (if enabled) already fired in
+    # the Notifier node, so with the local-first dashboard-only default this
+    # is complete. A no-op when there is no vector, or when similarity is
+    # unavailable (the query degrades to []).
+    if item.embedding is not None and find_similar_items(
+        db,
+        user_id=watch.user_id,
+        embedding=item.embedding,
+        embedding_model=embedding_model,
+        threshold=similarity_threshold,
+        exclude_run_id=run.id,
+        limit=1,
+    ):
         return False
     draft = build_notification_draft(str(watch.user_id), evaluation)
     if draft.dedup_key not in new_keys:

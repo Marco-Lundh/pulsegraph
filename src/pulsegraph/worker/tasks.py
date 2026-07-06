@@ -124,6 +124,7 @@ def run_watch_core(
                     ModelKind.OLLAMA: settings.ollama_model,
                 },
                 digest=user_wants_digest(db, watch.user_id),
+                similarity_threshold=settings.embedding_similarity_threshold,
             )
             run.status = RunStatus.SUCCEEDED
     except Exception as exc:

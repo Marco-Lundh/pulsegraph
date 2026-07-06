@@ -120,6 +120,14 @@ class Settings(BaseSettings):
     # job before giving up. On the final failed attempt the watch is
     # deactivated so a permanently broken watch stops being scheduled.
     worker_max_tries: int = Field(default=3, alias="WORKER_MAX_TRIES")
+    # Embedding versioning (ADR 0014): how many items the re-embed cron
+    # re-embeds per run when the embedding model has changed, and how close
+    # (cosine similarity, 0-1) two same-model vectors must be for the newer
+    # item to count as a semantic duplicate and be suppressed.
+    reembed_batch_size: int = Field(default=200, alias="REEMBED_BATCH_SIZE")
+    embedding_similarity_threshold: float = Field(
+        default=0.95, alias="EMBEDDING_SIMILARITY_THRESHOLD"
+    )
     monthly_cost_cap_usd: float = Field(
         default=10.0, alias="MONTHLY_COST_CAP_USD"
     )

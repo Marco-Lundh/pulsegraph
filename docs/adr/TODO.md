@@ -34,18 +34,16 @@ harder-scoped work.)
   (local-first), so nothing leaves the machine unless explicitly enabled.
   Revisit if/when the SDK gains per-run deletion.
 
-- **Embedding version safety is incomplete (ADR 0014).** `embedding_model`
-  is recorded per item, but there is no re-embedding migration/job, the
-  dimension is hardcoded (`Vector(768)` / `EMBEDDING_DIM = 768`), and no
-  similarity query is ever run (dedup is content-hash only).
-
 - **No graph checkpointer (ADR 0001).** `graph.compile()` runs without a
   checkpointer, so the ADR's state persistence / time-travel / rollback
   are not available at runtime.
 
   (ADR 0011 — prompt registry — is now closed: the analyzer loads the
   active template from the registry at runtime, and an admin Prompts tab
-  edits/versions/activates prompts.)
+  edits/versions/activates prompts. ADR 0014 — embedding versioning — is
+  also closed: EMBEDDING_DIM is centralized with a dimension guard, a
+  re-embed job backfills stale-model vectors, and a model-aware pgvector
+  similarity query powers semantic dedup.)
 
 ## Larger deferred work
 

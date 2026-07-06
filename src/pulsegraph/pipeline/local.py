@@ -11,6 +11,7 @@ import hashlib
 import struct
 from dataclasses import dataclass, field
 
+from pulsegraph.domain.constants import EMBEDDING_DIM
 from pulsegraph.domain.enums import ModelKind, SourceKind
 from pulsegraph.pipeline.contracts import (
     AnalysisResult,
@@ -19,8 +20,6 @@ from pulsegraph.pipeline.contracts import (
 )
 from pulsegraph.sources.base import FetchedItem, SourcePlugin
 from pulsegraph.sources.schema import validate_required_fields
-
-EMBEDDING_DIM = 768
 
 
 class HashingEmbedder:

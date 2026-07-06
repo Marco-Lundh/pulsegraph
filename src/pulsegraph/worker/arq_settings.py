@@ -21,6 +21,7 @@ from pulsegraph.sources.riksdagen import RiksdagenPlugin
 from pulsegraph.worker.alerts import run_alerts
 from pulsegraph.worker.digest import run_digest
 from pulsegraph.worker.drift import run_drift_recheck
+from pulsegraph.worker.reembed import run_reembed
 from pulsegraph.worker.retention import run_retention
 from pulsegraph.worker.scheduler import enqueue_due_watches
 from pulsegraph.worker.tasks import run_watch
@@ -112,6 +113,9 @@ class WorkerSettings:
         cron(run_alerts, minute={0, 15, 30, 45}),
         # Auto-resume drift-paused sources that recovered, hourly (ADR 0010).
         cron(run_drift_recheck, minute=30),
+        # Re-embed items stale for the current embedding model, daily at
+        # 04:00 (ADR 0014).
+        cron(run_reembed, hour=4, minute=0),
     ]
     on_startup = startup
     on_shutdown = shutdown
