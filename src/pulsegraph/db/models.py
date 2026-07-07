@@ -318,7 +318,15 @@ class Notification(Base):
 
     __tablename__ = "notifications"
     __table_args__ = (
-        UniqueConstraint("user_id", "dedup_key"),
+        # One row per (user, item, channel): each delivery channel tracks
+        # its own status/delivered_at/attempts (ADR 0016). The dashboard,
+        # email and webhook channels for the same item are distinct rows.
+        UniqueConstraint(
+            "user_id",
+            "dedup_key",
+            "channel",
+            name="uq_notifications_user_dedup_channel",
+        ),
         Index(
             "idx_notifications_user",
             "user_id",
@@ -347,11 +355,14 @@ class Notification(Base):
     delivered_at: Mapped[datetime.datetime | None] = mapped_column(
         DateTime(timezone=True)
     )
-    # Digest delivery retry count (ADR 0016). Incremented each time a
-    # daily-digest push fails for this row; once it reaches
-    # Settings.digest_max_attempts the row is dead-lettered (status set to
-    # FAILED) instead of being retried forever. Unused for instant/
-    # dashboard delivery, which never leaves a row PENDING.
+    # Delivery retry count (ADR 0016). Incremented each time a push fails
+    # for this row: a queued daily-digest row (a dashboard-channel row left
+    # PENDING) on the digest job, an instant email/webhook row on the
+    # instant-retry job. Once it reaches the matching cap
+    # (Settings.digest_max_attempts / instant_max_attempts) the row is
+    # dead-lettered (status set to FAILED) instead of being retried forever.
+    # A dashboard row delivered instantly (not queued for a digest) is
+    # written SENT immediately and never uses this.
     attempts: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("0")
     )

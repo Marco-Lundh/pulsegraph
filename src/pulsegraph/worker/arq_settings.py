@@ -24,6 +24,7 @@ from pulsegraph.worker.digest import run_digest
 from pulsegraph.worker.drift import run_drift_recheck
 from pulsegraph.worker.reembed import run_reembed
 from pulsegraph.worker.retention import run_retention
+from pulsegraph.worker.retry import run_instant_retry
 from pulsegraph.worker.scheduler import enqueue_due_watches
 from pulsegraph.worker.tasks import run_watch
 
@@ -125,6 +126,9 @@ class WorkerSettings:
         # Re-embed items stale for the current embedding model, daily at
         # 04:00 (ADR 0014).
         cron(run_reembed, hour=4, minute=0),
+        # Retry failed instant email/webhook deliveries, every 10 minutes
+        # (ADR 0016).
+        cron(run_instant_retry, minute={0, 10, 20, 30, 40, 50}),
     ]
     on_startup = startup
     on_shutdown = shutdown

@@ -47,6 +47,7 @@ from pulsegraph.domain.enums import (
 )
 from pulsegraph.pipeline.agents import build_notification_draft
 from pulsegraph.pipeline.contracts import EvaluationRecord
+from pulsegraph.pipeline.delivery import ChannelDelivery, ChannelOutcome
 from pulsegraph.pipeline.prompts import active_prompt_id
 from pulsegraph.pipeline.state import PipelineState
 from pulsegraph.worker.similarity import find_similar_items
@@ -156,6 +157,7 @@ def persist_run_results(
     now: datetime.datetime | None = None,
     digest: bool = False,
     similarity_threshold: float = 1.0,
+    deliveries: dict[str, list[ChannelDelivery]] | None = None,
 ) -> int:
     """Write the run's items, analyses, evaluations and notifications.
 
@@ -165,6 +167,13 @@ def persist_run_results(
     ``PENDING`` (queued for the daily digest job, ADR 0016) instead of
     ``SENT``; instant delivery already happened in the Notifier node.
 
+    ``deliveries`` is the Notifier sink's per-channel delivery log for this
+    run (dedup_key -> outcomes). For each surfaced item, a per-channel
+    ``Notification`` row is written alongside the dashboard row so instant
+    email/webhook delivery is tracked and a failure can be retried (ADR
+    0016). Digest users are skipped by the instant sink, so their log is
+    empty and only the dashboard row is written, as before.
+
     ``similarity_threshold`` (0-1) enables semantic dedup (ADR 0014): a new
     item whose vector is at least this cosine-similar to one from an earlier
     run is still persisted but not re-notified. The default 1.0 disables it
@@ -172,6 +181,7 @@ def persist_run_results(
     configured threshold.
     """
     now = now or datetime.datetime.now(datetime.UTC)
+    deliveries = deliveries or {}
     embeddings = state.get("embeddings", {})
     # The Notifier already applied cross-run dedup, so its drafts are the
     # exact set of new, approved items to surface on the dashboard.
@@ -197,6 +207,7 @@ def persist_run_results(
                     digest=digest,
                     prompt_id=prompt_id,
                     similarity_threshold=similarity_threshold,
+                    deliveries=deliveries,
                 )
         except IntegrityError:
             # Already stored by an earlier run; the savepoint rolled back.
@@ -221,8 +232,10 @@ def _persist_evaluation(
     digest: bool = False,
     prompt_id: uuid.UUID | None = None,
     similarity_threshold: float = 1.0,
+    deliveries: dict[str, list[ChannelDelivery]] | None = None,
 ) -> bool:
     """Persist one evaluation's chain; return whether a notif was written."""
+    deliveries = deliveries or {}
     analysis_record = evaluation.analysis
     fetched = analysis_record.item
     content_hash = analysis_record.content_hash
@@ -315,6 +328,30 @@ def _persist_evaluation(
             attempts=0,
         )
     )
-    # Flush so a duplicate (user_id, dedup_key) trips inside the savepoint.
+    # Per-channel instant delivery rows (ADR 0016): the Notifier already
+    # attempted email/webhook for this draft and the sink recorded the
+    # outcome per channel. Write a row for each real attempt so its status
+    # is tracked and a transient failure can be retried; a SKIPPED channel
+    # (the user has not enabled it) recorded nothing, so no row is written.
+    for delivery in deliveries.get(draft.dedup_key, ()):
+        if delivery.outcome is ChannelOutcome.SKIPPED:
+            continue
+        sent = delivery.outcome is ChannelOutcome.SENT
+        db.add(
+            Notification(
+                user_id=watch.user_id,
+                analysis_id=analysis.id,
+                channel=delivery.channel,
+                dedup_key=draft.dedup_key,
+                status=(
+                    NotificationStatus.SENT
+                    if sent
+                    else NotificationStatus.PENDING
+                ),
+                delivered_at=now if sent else None,
+                attempts=0,
+            )
+        )
+    # Flush so a duplicate (user_id, dedup_key, channel) trips the savepoint.
     db.flush()
     return True

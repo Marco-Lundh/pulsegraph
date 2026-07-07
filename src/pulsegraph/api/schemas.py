@@ -171,6 +171,22 @@ class ItemResultOut(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class DeliveryOut(BaseModel):
+    """One sibling channel's delivery status for a notification (ADR 0016).
+
+    The dashboard feed shows one row per item (the dashboard channel); each
+    row carries the per-channel delivery status of the email/webhook sends
+    for the same item so the user can see whether each channel got through.
+    """
+
+    channel: NotificationChannel
+    status: NotificationStatus
+    delivered_at: datetime.datetime | None
+    attempts: int
+
+    model_config = {"from_attributes": True}
+
+
 class NotificationOut(BaseModel):
     id: uuid.UUID
     user_id: uuid.UUID
@@ -179,6 +195,7 @@ class NotificationOut(BaseModel):
     dedup_key: str
     status: NotificationStatus
     delivered_at: datetime.datetime | None
+    deliveries: list[DeliveryOut] = []
 
     model_config = {"from_attributes": True}
 

@@ -16,16 +16,6 @@ harder-scoped work.)
 
 ## Robustness & hardening
 
-- **Instant delivery is fire-and-forget (ADR 0016).** Only the digest path
-  tracks per-notification status and retries. Instant email/webhook sends
-  log failures but write no per-channel `Notification` row, status, or
-  retry — only the dashboard channel gets a row. This is architectural, not
-  a quick fix: the `notifications` unique constraint is `(user_id,
-  dedup_key)` (one row per item, ADR 0016), so per-channel rows require
-  adding `channel` to that constraint and reworking the dedup/digest
-  idempotency that assumes a single row per item. Track with the other
-  architectural follow-ups (0014 / 0001 / 0011).
-
 - **LangSmith traces are not purged on erasure/retention (ADR 0018).**
   Consent at signup is now recorded, but a purged run's external LangSmith
   trace (`langsmith_trace_id`) is not deleted: the LangSmith SDK exposes no

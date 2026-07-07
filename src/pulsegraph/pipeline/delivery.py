@@ -19,10 +19,12 @@ import logging
 import smtplib
 from collections.abc import Callable, Sequence
 from email.message import EmailMessage
+from enum import StrEnum
 from typing import NamedTuple
 
 import httpx
 
+from pulsegraph.domain.enums import NotificationChannel
 from pulsegraph.pipeline.contracts import NotificationDraft, NotificationSink
 
 logger = logging.getLogger(__name__)
@@ -30,6 +32,28 @@ logger = logging.getLogger(__name__)
 # Maps a draft's ``user_id`` to its destination for one channel (an email
 # address or a webhook URL), or ``None`` when the user has not enabled it.
 Resolver = Callable[[str], str | None]
+
+
+class ChannelOutcome(StrEnum):
+    """The result of attempting delivery on one channel (ADR 0016).
+
+    ``SKIPPED`` means the user has not enabled the channel (the resolver
+    returned no destination), so no attempt was made and no row should be
+    written. ``SENT`` and ``FAILED`` are real attempts and each produce a
+    per-channel ``Notification`` row (SENT immediately, FAILED left PENDING
+    for the retry job).
+    """
+
+    SKIPPED = "skipped"
+    SENT = "sent"
+    FAILED = "failed"
+
+
+class ChannelDelivery(NamedTuple):
+    """One channel's outcome for a draft, recorded in a run's delivery log."""
+
+    channel: NotificationChannel
+    outcome: ChannelOutcome
 
 
 class SmtpTransport:
@@ -76,6 +100,8 @@ class _Transport:  # pragma: no cover - structural typing helper
 class EmailSink:
     """Delivers a notification as an email (ADR 0016)."""
 
+    channel = NotificationChannel.EMAIL
+
     def __init__(
         self,
         *,
@@ -88,10 +114,32 @@ class EmailSink:
         self._resolve = resolve
 
     def send(self, draft: NotificationDraft) -> None:
-        """Email ``draft`` to the user, or skip if no address is set."""
+        """Email ``draft`` to the user, or skip if no address is set.
+
+        Raises on a delivery failure, honoring the ``NotificationSink``
+        port; :meth:`deliver` is the failure-swallowing variant used by
+        :class:`MultiSink` to record a per-channel outcome.
+        """
         recipient = self._resolve(draft.user_id)
         if not recipient:
             return
+        self._deliver_to(recipient, draft)
+
+    def deliver(self, draft: NotificationDraft) -> ChannelOutcome:
+        """Attempt delivery, reporting the outcome instead of raising."""
+        recipient = self._resolve(draft.user_id)
+        if not recipient:
+            return ChannelOutcome.SKIPPED
+        try:
+            self._deliver_to(recipient, draft)
+        except Exception:
+            logger.exception(
+                "email delivery failed for user %s", draft.user_id
+            )
+            return ChannelOutcome.FAILED
+        return ChannelOutcome.SENT
+
+    def _deliver_to(self, recipient: str, draft: NotificationDraft) -> None:
         self._transport.send(self._build(recipient, draft))
 
     def _build(self, recipient: str, draft: NotificationDraft) -> EmailMessage:
@@ -118,6 +166,8 @@ class WebhookSink:
     so the receiver can verify the call came from PulseGraph.
     """
 
+    channel = NotificationChannel.WEBHOOK
+
     def __init__(
         self,
         *,
@@ -132,10 +182,32 @@ class WebhookSink:
         self._timeout = timeout
 
     def send(self, draft: NotificationDraft) -> None:
-        """POST ``draft`` to the user's webhook, or skip if none is set."""
+        """POST ``draft`` to the user's webhook, or skip if none is set.
+
+        Raises on a delivery failure, honoring the ``NotificationSink``
+        port; :meth:`deliver` is the failure-swallowing variant used by
+        :class:`MultiSink` to record a per-channel outcome.
+        """
         url = self._resolve(draft.user_id)
         if not url:
             return
+        self._deliver_to(url, draft)
+
+    def deliver(self, draft: NotificationDraft) -> ChannelOutcome:
+        """Attempt delivery, reporting the outcome instead of raising."""
+        url = self._resolve(draft.user_id)
+        if not url:
+            return ChannelOutcome.SKIPPED
+        try:
+            self._deliver_to(url, draft)
+        except Exception:
+            logger.exception(
+                "webhook delivery failed for user %s", draft.user_id
+            )
+            return ChannelOutcome.FAILED
+        return ChannelOutcome.SENT
+
+    def _deliver_to(self, url: str, draft: NotificationDraft) -> None:
         body = json.dumps(
             {
                 "user_id": draft.user_id,
@@ -175,6 +247,12 @@ class MultiSink:
 
     def __init__(self, sinks: Sequence[NotificationSink]) -> None:
         self._sinks = tuple(sinks)
+        # Per-run per-channel delivery log, keyed by draft dedup_key. Each
+        # SENT/FAILED entry becomes a per-channel Notification row in
+        # persistence (ADR 0016); SKIPPED channels are recorded but produce
+        # no row. Built fresh per run (a new sink is assembled each run), so
+        # the log is naturally run-scoped.
+        self.deliveries: dict[str, list[ChannelDelivery]] = {}
 
     def send(self, draft: NotificationDraft) -> bool:
         """Deliver ``draft`` over every channel, best-effort.
@@ -198,7 +276,26 @@ class MultiSink:
         """
         all_ok = True
         any_ok = not self._sinks
+        records: list[ChannelDelivery] = []
         for sink in self._sinks:
+            deliver = getattr(sink, "deliver", None)
+            channel = getattr(sink, "channel", None)
+            if deliver is not None:
+                # Real channel sinks report a tri-state outcome and never
+                # raise, so we can record which channel got through.
+                outcome = deliver(draft)
+                if channel is not None:
+                    records.append(ChannelDelivery(channel, outcome))
+                if outcome is ChannelOutcome.FAILED:
+                    all_ok = False
+                else:
+                    # SENT or SKIPPED both count as "ok" for the digest
+                    # flags below, preserving the prior skip==success
+                    # semantics; only the delivery log distinguishes them.
+                    any_ok = True
+                continue
+            # Sinks without deliver() (offline InMemorySink, test doubles):
+            # fall back to the raising send() and record no channel.
             try:
                 sink.send(draft)
                 any_ok = True
@@ -209,4 +306,6 @@ class MultiSink:
                     type(sink).__name__,
                     draft.user_id,
                 )
+        if records:
+            self.deliveries.setdefault(draft.dedup_key, []).extend(records)
         return DeliveryResult(all_ok=all_ok, any_ok=any_ok)

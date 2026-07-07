@@ -10,9 +10,10 @@ from pulsegraph.domain.enums import (
     NotificationFrequency,
     UserRole,
 )
-from pulsegraph.pipeline.delivery import MultiSink
+from pulsegraph.pipeline.delivery import EmailSink, MultiSink, WebhookSink
 from pulsegraph.worker.sinks import (
     _destination_resolver,
+    build_channel_sink,
     build_notification_sink,
 )
 
@@ -154,3 +155,46 @@ def test_builds_no_channels_by_default() -> None:
 
     assert isinstance(sink, MultiSink)
     assert sink._sinks == ()
+
+
+# --- build_channel_sink ----------------------------------------------------
+
+
+def test_build_channel_sink_returns_email_sink_when_enabled() -> None:
+    sink = build_channel_sink(
+        _settings(email_enabled=True),
+        FakeSession(),
+        NotificationChannel.EMAIL,
+    )
+    assert isinstance(sink, EmailSink)
+
+
+def test_build_channel_sink_returns_webhook_sink_when_enabled() -> None:
+    sink = build_channel_sink(
+        _settings(webhook_enabled=True),
+        FakeSession(),
+        NotificationChannel.WEBHOOK,
+    )
+    assert isinstance(sink, WebhookSink)
+
+
+def test_build_channel_sink_returns_none_when_channel_off() -> None:
+    # email disabled globally -> no sink to retry on
+    assert (
+        build_channel_sink(
+            _settings(), FakeSession(), NotificationChannel.EMAIL
+        )
+        is None
+    )
+
+
+def test_build_channel_sink_returns_none_for_dashboard() -> None:
+    # Dashboard is not a retryable outbound channel.
+    assert (
+        build_channel_sink(
+            _settings(email_enabled=True, webhook_enabled=True),
+            FakeSession(),
+            NotificationChannel.DASHBOARD,
+        )
+        is None
+    )

@@ -39,7 +39,11 @@ from sqlalchemy.orm import Session
 
 from pulsegraph.config import Settings, get_settings
 from pulsegraph.db.models import Analysis, Notification, NotificationSetting
-from pulsegraph.domain.enums import NotificationFrequency, NotificationStatus
+from pulsegraph.domain.enums import (
+    NotificationChannel,
+    NotificationFrequency,
+    NotificationStatus,
+)
 from pulsegraph.pipeline.contracts import NotificationDraft
 from pulsegraph.worker.sinks import build_notification_sink
 
@@ -101,12 +105,23 @@ def send_digests(
     Commits its own transaction.
     """
     now = now or datetime.datetime.now(datetime.UTC)
+    # Only the dashboard channel's PENDING rows are the digest queue. Instant
+    # email/webhook failures also leave PENDING rows (ADR 0016), but on their
+    # own channel — the instant-retry job owns those. Without this channel
+    # filter the digest would sweep them up and, since a pure-instant user
+    # has no DAILY_DIGEST setting, the digest sink skips them (all channels
+    # SKIPPED -> all_ok) and they would be marked SENT without ever being
+    # delivered. FakeSession.filter() is a no-op, so re-check in Python too.
     pending = [
         n
         for n in db.query(Notification)
-        .filter(Notification.status == NotificationStatus.PENDING)
+        .filter(
+            Notification.status == NotificationStatus.PENDING,
+            Notification.channel == NotificationChannel.DASHBOARD,
+        )
         .all()
         if n.status == NotificationStatus.PENDING
+        and n.channel == NotificationChannel.DASHBOARD
     ]
 
     by_user: dict[uuid.UUID, list[Notification]] = defaultdict(list)

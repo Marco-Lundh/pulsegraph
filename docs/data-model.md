@@ -223,8 +223,10 @@ erDiagram
   scheduler; a partial unique index allows **at most one** `pipeline_runs` row
   per watch in the `running` state, so a watch is never processed twice
   concurrently.
-- **Alerts are deduplicated (ADR 0016).** `notifications.dedup_key` is unique per
-  user, so the same result is never delivered twice even across channels.
+- **Alerts are deduplicated per channel (ADR 0016).** `notifications` is unique
+  on `(user_id, dedup_key, channel)`, so the same result is delivered at most
+  once **on each channel** — every channel tracks its own delivery status and
+  retries independently, while sharing one dedup identity per item.
 - **Routing and cost stay observable.** `analyses.model_used`/`model_version`
   record local vs. Claude per item (ADR 0002); `cost_events` records the spend
   behind it (ADR 0008). Both surface in the dashboard source log.
@@ -366,7 +368,10 @@ CREATE TABLE notifications (
     status       notification_status NOT NULL DEFAULT 'pending',
     delivered_at timestamptz,
     attempts     integer NOT NULL DEFAULT 0,
-    UNIQUE (user_id, dedup_key)
+    -- One row per (user, item, channel): each delivery channel tracks its
+    -- own status/delivered_at/attempts (ADR 0016).
+    CONSTRAINT uq_notifications_user_dedup_channel
+        UNIQUE (user_id, dedup_key, channel)
 );
 CREATE INDEX idx_notifications_user ON notifications(user_id, delivered_at DESC);
 

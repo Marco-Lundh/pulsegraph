@@ -37,13 +37,17 @@ def _setting(
 
 
 def _pending(
-    uid: uuid.UUID, analysis_id: uuid.UUID, key: str, attempts: int = 0
+    uid: uuid.UUID,
+    analysis_id: uuid.UUID,
+    key: str,
+    attempts: int = 0,
+    channel: NotificationChannel = NotificationChannel.DASHBOARD,
 ) -> Notification:
     return Notification(
         id=uuid.uuid4(),
         user_id=uid,
         analysis_id=analysis_id,
-        channel=NotificationChannel.DASHBOARD,
+        channel=channel,
         dedup_key=key,
         status=NotificationStatus.PENDING,
         delivered_at=None,
@@ -132,6 +136,29 @@ def test_send_digests_batches_and_marks_sent() -> None:
     assert n1.status == NotificationStatus.SENT
     assert n1.delivered_at == _NOW
     assert n2.status == NotificationStatus.SENT
+
+
+def test_send_digests_ignores_instant_channel_pending_rows() -> None:
+    # A failed instant email/webhook send leaves a PENDING row on its own
+    # channel for the instant-retry job (ADR 0016). The digest job must NOT
+    # sweep it up: a pure-instant user has no DAILY_DIGEST setting, so the
+    # digest sink would skip every channel (all_ok) and mark the row SENT
+    # without ever delivering it -- a silent loss. It stays PENDING here.
+    uid = uuid.uuid4()
+    a1 = _analysis("Instant, failed webhook")
+    n1 = _pending(uid, a1.id, "jobtech:1", channel=NotificationChannel.WEBHOOK)
+    db = FakeSession(a1, n1)
+
+    result = send_digests(db, Settings(_env_file=None), now=_NOW)
+
+    assert result == {
+        "users": 0,
+        "notifications": 0,
+        "failed_users": 0,
+        "dead_lettered": 0,
+    }
+    assert n1.status == NotificationStatus.PENDING
+    assert n1.attempts == 0
 
 
 def test_send_digests_noop_without_pending() -> None:
