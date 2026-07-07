@@ -42,8 +42,11 @@ harder-scoped work.)
   Ollama/Claude routing and empirically tuning `EVAL_MIN_F1` is still open
   (the harness's predictor is already injectable for this).
 
-- **No real CD/deploy pipeline (ADR 0017).** CI (`.github/workflows/ci.yml`)
-  covers lint, unit tests, the offline eval gate, the e2e smoke test, and a
-  dashboard lint/typecheck/build job — but nothing deploys anywhere, there
-  is no staging/production split, and "migrations applied automatically on
-  deploy" with a documented rollback path is unimplemented.
+  (ADR 0017 — deployment/CD — is now closed: a multi-stage `Dockerfile`
+  serves the api/worker/migrate roles from one image, `docker-compose.prod.yml`
+  reproduces the full stack locally, `.github/workflows/deploy.yml` chains
+  after CI to build → migrate → deploy with a staging/production split, and
+  Alembic migrations run automatically on deploy with a documented rollback
+  path. The actual host rollout is a single platform-agnostic seam
+  (`scripts/deploy_release.sh`) an operator wires to their platform, gated so
+  the pipeline is a safe no-op until configured. See `docs/deployment.md`.)

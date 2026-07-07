@@ -1,0 +1,149 @@
+# CD pipeline (ADR 0017): build -> migrate -> deploy, staging then production.
+#
+# The quality gates (lint, tests, offline-eval gate, build) live in CI
+# (ci.yml). This workflow chains AFTER a successful CI run on master to
+# deploy staging automatically, and promotes to production only on an
+# explicit, environment-gated manual dispatch. Every migrate/deploy step is
+# a safe no-op until the target environment's secrets are configured, so the
+# pipeline is real but harmless out of the box (see docs/deployment.md).
+name: Deploy
+
+on:
+  # Auto-deploy staging once CI is green on master.
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [master]
+  # Manual promotion (staging re-run or production release).
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        type: choice
+        options: [staging, production]
+        default: staging
+
+concurrency:
+  group: deploy-${{ github.event.inputs.environment || 'staging' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    name: Build & push image
+    # Skip if the upstream CI run failed; always allow manual dispatch.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.ref.outputs.image }}
+      sha: ${{ steps.ref.outputs.sha }}
+    steps:
+      - name: Resolve commit + image reference
+        id: ref
+        run: |
+          # GHCR requires a fully-lowercase repository path; github.repository
+          # preserves the owner's casing (e.g. Marco-Lundh), so lowercase it.
+          name="ghcr.io/${{ github.repository }}"
+          name="${name,,}"
+          sha="${{ github.event.workflow_run.head_sha || github.sha }}"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "image=${name}:sha-${sha::12}" >> "$GITHUB_OUTPUT"
+          echo "latest=${name}:latest" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.ref.outputs.sha }}
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.ref.outputs.image }}
+            ${{ steps.ref.outputs.latest }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy-staging:
+    name: Deploy to staging
+    needs: build
+    if: >-
+      github.event_name == 'workflow_run' ||
+      (github.event_name == 'workflow_dispatch' &&
+       inputs.environment == 'staging')
+    runs-on: ubuntu-latest
+    environment: staging
+    env:
+      IMAGE: ${{ needs.build.outputs.image }}
+      DEPLOY_ENV: staging
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DEPLOY_WEBHOOK_URL: ${{ secrets.DEPLOY_WEBHOOK_URL }}
+      DEPLOY_ENABLED: ${{ secrets.DEPLOY_ENABLED }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.build.outputs.sha }}
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Alembic upgrade head against the staging database, applied by the
+      # freshly built image's one-shot `migrate` role. Rollback path is
+      # documented in docs/deployment.md.
+      - name: Apply database migrations
+        run: ./scripts/deploy_release.sh migrate
+
+      - name: Deploy release
+        run: ./scripts/deploy_release.sh deploy
+
+  deploy-production:
+    name: Deploy to production
+    needs: build
+    # Production is reached only by an explicit dispatch; the `production`
+    # GitHub Environment's protection rules (required reviewers) are the
+    # human promotion gate.
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.environment == 'production'
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      IMAGE: ${{ needs.build.outputs.image }}
+      DEPLOY_ENV: production
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DEPLOY_WEBHOOK_URL: ${{ secrets.DEPLOY_WEBHOOK_URL }}
+      DEPLOY_ENABLED: ${{ secrets.DEPLOY_ENABLED }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.build.outputs.sha }}
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Apply database migrations
+        run: ./scripts/deploy_release.sh migrate
+
+      - name: Deploy release
+        run: ./scripts/deploy_release.sh deploy

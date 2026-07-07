@@ -1,0 +1,47 @@
+# Keep the build context small and reproducible: ship only what the image
+# needs (src, migrations, pyproject, uv.lock, README, docker/entrypoint.sh).
+
+# Version control and CI
+.git
+.github
+.gitignore
+
+# The dashboard is built and served separately, not inside this image.
+dashboard
+
+# Docs, ADRs, and local infra descriptors
+docs
+docker-compose*.yml
+Dockerfile
+.dockerignore
+*.md
+!README.md
+
+# Python caches and build output
+__pycache__/
+*.py[cod]
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.coverage
+htmlcov
+dist
+build
+*.egg-info
+
+# Virtualenvs and local env files
+.venv
+venv
+.env
+.env.*
+
+# Editor / OS cruft
+.vscode
+.idea
+.claude
+.DS_Store
+Thumbs.db
+
+# Test suites never belong in the runtime image
+**/*_test.py
+scripts/*_test.py

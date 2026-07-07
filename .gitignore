@@ -1,7 +1,10 @@
 # Environment / secrets (ADR 0009)
 .env
 *.env
+.env.*
+# Templates are safe to track; real per-environment files are not.
 !.env.example
+!.env.prod.example
 
 # Python
 __pycache__/

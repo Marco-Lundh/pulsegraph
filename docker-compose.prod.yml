@@ -1,0 +1,108 @@
+# Production-like stack for PulseGraph (ADR 0017).
+#
+# Unlike docker-compose.yml (local dev: only db + redis, with the app running
+# on the host), this file runs the built image for every runtime role —
+# migrate, api, worker — the way a managed platform would. It is the closest
+# reproduction of production you can stand up locally and is what the deploy
+# runbook (docs/deployment.md) verifies against.
+#
+#   cp .env.prod.example .env.prod        # then set POSTGRES_PASSWORD + JWT_SECRET_KEY
+#   docker-compose --env-file .env.prod -f docker-compose.prod.yml up --build
+#
+# `migrate` runs to completion first (applies Alembic migrations); api and
+# worker start only once it has exited 0 and the datastores are healthy.
+
+x-app-image: &app-image
+  image: pulsegraph:${IMAGE_TAG:-local}
+  build:
+    context: .
+
+x-app-env: &app-env
+  PULSEGRAPH_ENV: ${PULSEGRAPH_ENV:-production}
+  DATABASE_URL: postgresql+psycopg://pulsegraph:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@db:5432/pulsegraph
+  REDIS_URL: redis://redis:6379/0
+  JWT_SECRET_KEY: ${JWT_SECRET_KEY:?set a strong JWT_SECRET_KEY (>=32 bytes)}
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: pulsegraph
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: pulsegraph
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pulsegraph"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # One-shot: apply migrations, then exit. Gates api/worker startup.
+  migrate:
+    <<: *app-image
+    command: ["migrate"]
+    environment: *app-env
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    <<: *app-image
+    command: ["api"]
+    environment:
+      <<: *app-env
+      # Empty by default: the API is reached directly here, so forwarded
+      # headers are not trusted. Behind a real load balancer, set this to the
+      # LB's IP ranges (ADR 0021) — see .env.prod.example.
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-}
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    # Liveness only (never touches DB/Redis/Ollama). A managed platform's
+    # readiness probe should instead target /health/ready once Ollama is
+    # reachable — see docs/deployment.md.
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  worker:
+    <<: *app-image
+    command: ["worker"]
+    environment: *app-env
+    depends_on:
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  pg_data:
