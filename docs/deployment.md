@@ -66,7 +66,7 @@ settings from `.env.example`.
 ```
 CI (ci.yml)            Deploy (deploy.yml)
 lint ─ test ─ eval     build image ─ push GHCR ─ migrate ─ deploy
-   └─ build            (staging auto after green CI; production on demand)
+   └─ build            (staging auto after CI when opt-in; production on demand)
 ```
 
 - **CI** (`.github/workflows/ci.yml`) is the quality gate: ruff, pytest, the
@@ -77,7 +77,7 @@ lint ─ test ─ eval     build image ─ push GHCR ─ migrate ─ deploy
   1. builds the image and pushes it to GHCR, tagged `sha-<commit>` + `latest`
      (uses the built-in `GITHUB_TOKEN` — no external secret needed);
   2. **deploy-staging** — runs migrations then the deploy seam against the
-     `staging` environment (automatic);
+     `staging` environment (automatic, opt-in — see below);
   3. **deploy-production** — same, against `production`, reached **only** by a
      manual `workflow_dispatch` with `environment: production`. The
      production Environment's required-reviewers rule is the human promotion
@@ -85,6 +85,21 @@ lint ─ test ─ eval     build image ─ push GHCR ─ migrate ─ deploy
 
 Both migrate and deploy steps call `scripts/deploy_release.sh`, which no-ops
 with a clear log line when the environment's secrets are absent.
+
+**Auto-deploy is opt-in.** The automatic post-CI path only runs when the repo
+variable `AUTO_DEPLOY=true` is set (Settings → Secrets and variables →
+Actions → Variables) — distinct from the `DEPLOY_ENABLED` *secret* above,
+which toggles the deploy seam itself. Until then, an ordinary push to `master`
+skips the Deploy run (it shows as neutral, never a red failure). To exercise
+the pipeline on demand regardless of the variable, trigger it manually:
+
+```
+gh workflow run deploy.yml -f environment=staging
+```
+
+The build uses the Buildx **container driver** (`docker/setup-buildx-action`)
+so the GitHub Actions build cache (`cache-to: type=gha`) works — the default
+`docker` driver cannot export it.
 
 ### Going live (wiring the deploy seam)
 

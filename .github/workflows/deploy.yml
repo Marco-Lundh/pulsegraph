@@ -1,15 +1,17 @@
 # CD pipeline (ADR 0017): build -> migrate -> deploy, staging then production.
 #
 # The quality gates (lint, tests, offline-eval gate, build) live in CI
-# (ci.yml). This workflow chains AFTER a successful CI run on master to
-# deploy staging automatically, and promotes to production only on an
-# explicit, environment-gated manual dispatch. Every migrate/deploy step is
-# a safe no-op until the target environment's secrets are configured, so the
+# (ci.yml). Auto-deploy of staging after a green CI run on master is opt-in
+# (repo variable AUTO_DEPLOY=true); production is always an explicit,
+# environment-gated manual dispatch. Every migrate/deploy step is a safe
+# no-op until the target environment's secrets are configured, so the
 # pipeline is real but harmless out of the box (see docs/deployment.md).
 name: Deploy
 
 on:
-  # Auto-deploy staging once CI is green on master.
+  # After CI is green on master. Opt-in: only builds/deploys when the repo
+  # variable AUTO_DEPLOY=true (otherwise the run skips and stays neutral,
+  # so master is never marked red by a deploy nobody asked for).
   workflow_run:
     workflows: ["CI"]
     types: [completed]
@@ -34,10 +36,15 @@ permissions:
 jobs:
   build:
     name: Build & push image
-    # Skip if the upstream CI run failed; always allow manual dispatch.
+    # Manual dispatch always runs. The automatic post-CI path is opt-in via
+    # the AUTO_DEPLOY repo variable, so an ordinary master push does not build
+    # (the job skips -> the whole run is neutral, not a red failure). Set the
+    # variable to true to restore auto-deploy of staging. (Distinct from the
+    # DEPLOY_ENABLED *secret* below, which toggles the deploy seam itself.)
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
+      (github.event.workflow_run.conclusion == 'success' &&
+       vars.AUTO_DEPLOY == 'true')
     runs-on: ubuntu-latest
     outputs:
       image: ${{ steps.ref.outputs.image }}
@@ -65,6 +72,12 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The default `docker` driver cannot export the gha build cache; the
+      # container driver this sets up can. Without it, build-push fails with
+      # "Cache export is not supported for the docker driver".
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
       - name: Build and push image
         uses: docker/build-push-action@v6
