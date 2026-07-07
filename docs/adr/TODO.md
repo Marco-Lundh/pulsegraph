@@ -24,14 +24,6 @@ harder-scoped work.)
   (local-first), so nothing leaves the machine unless explicitly enabled.
   Revisit if/when the SDK gains per-run deletion.
 
-- **GDPR erasure doesn't reach graph checkpoints (ADR 0001/0018).** When
-  the Postgres checkpointer is enabled, the scheduled retention job now
-  purges each expired run's checkpoints, but an *immediate* user erasure
-  (`DELETE /auth/me` / `DELETE /admin/users`) does not — the user's
-  checkpoints are only cleared on the next retention pass. Wiring the
-  checkpointer into the erasure path (delete the user's runs' threads) is
-  the remaining gap. Off by default (checkpointer is opt-in).
-
   (ADR 0011 — prompt registry — is now closed: the analyzer loads the
   active template from the registry at runtime, and an admin Prompts tab
   edits/versions/activates prompts. ADR 0014 — embedding versioning — is

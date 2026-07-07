@@ -16,7 +16,7 @@ is selected by config:
 """
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import MemorySaver
@@ -103,6 +103,31 @@ def _postgres_checkpointer(
             "postgres checkpointer unavailable; running without one"
         )
         return None, _noop
+
+
+def delete_threads(
+    checkpointer: BaseCheckpointSaver | None, thread_ids: Iterable[str]
+) -> int:
+    """Delete the given checkpoint threads, best-effort (ADR 0001).
+
+    Returns how many were deleted. A no-op (returns 0) unless a checkpointer
+    with a synchronous ``delete_thread`` is configured (the Postgres
+    backend); a per-thread failure is logged and skipped so one bad thread
+    never blocks the rest. Used by GDPR retention (per expired run) and by
+    immediate user erasure (per the erased user's runs), keyed by the run id
+    that was the run's ``thread_id`` (ADR 0018).
+    """
+    delete_thread = getattr(checkpointer, "delete_thread", None)
+    if not callable(delete_thread):
+        return 0
+    deleted = 0
+    for thread_id in thread_ids:
+        try:
+            delete_thread(thread_id)
+            deleted += 1
+        except Exception:  # noqa: BLE001
+            logger.exception("failed to delete checkpoints for %s", thread_id)
+    return deleted
 
 
 def checkpoint_history(

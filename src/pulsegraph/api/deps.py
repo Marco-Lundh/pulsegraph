@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from pulsegraph.api.auth import decode_token
 from pulsegraph.config import get_settings
 from pulsegraph.db.models import User
+from pulsegraph.pipeline.checkpointer import build_checkpointer
 from pulsegraph.redis_client import make_redis
 
 _bearer = HTTPBearer()
@@ -43,6 +44,21 @@ def get_db() -> Generator[Session, None, None]:
         yield db
     finally:
         db.close()
+
+
+def get_checkpointer() -> Generator[object, None, None]:
+    """Yield a graph checkpointer for the request, then release it.
+
+    Used by the GDPR erasure endpoints to purge a user's run checkpoints
+    (ADR 0001/0018). Built per request and closed after: erasure is rare,
+    and for the local-first default backend (``none``) this is a cheap
+    ``(None, no-op)``. Overridden in tests to inject a fake checkpointer.
+    """
+    checkpointer, close = build_checkpointer(get_settings())
+    try:
+        yield checkpointer
+    finally:
+        close()
 
 
 def get_current_user(
