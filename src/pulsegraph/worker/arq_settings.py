@@ -110,6 +110,10 @@ class WorkerSettings:
     # Retry a failed job with arq's built-in backoff, up to this many
     # attempts, before ``run_watch`` deactivates the watch (ADR 0015).
     max_tries = get_settings().worker_max_tries
+    # arq reads this on the class, so it must be a RedisSettings instance,
+    # not a method — evaluated once at import like max_tries above
+    # (get_settings() is cached, so it is the process-wide config).
+    redis_settings = RedisSettings.from_dsn(get_settings().redis_url)
     cron_jobs = [
         cron(
             enqueue_due_watches,
@@ -132,7 +136,3 @@ class WorkerSettings:
     ]
     on_startup = startup
     on_shutdown = shutdown
-
-    @classmethod
-    def redis_settings(cls) -> RedisSettings:
-        return RedisSettings.from_dsn(get_settings().redis_url)

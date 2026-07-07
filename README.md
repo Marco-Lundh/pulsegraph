@@ -131,6 +131,28 @@ To run the dashboard checks locally before pushing a frontend change:
 cd dashboard && npm run lint && npm run build
 ```
 
+## Deployment
+
+A multi-stage [`Dockerfile`](Dockerfile) builds one image that serves every
+runtime role — `api`, `worker`, or a one-shot `migrate` — selected by the
+first argument. [`docker-compose.prod.yml`](docker-compose.prod.yml)
+reproduces the full production stack (migrate → api + worker over managed
+Postgres + Redis) locally:
+
+```bash
+cp .env.prod.example .env.prod          # set POSTGRES_PASSWORD + a strong JWT_SECRET_KEY
+docker-compose --env-file .env.prod -f docker-compose.prod.yml up --build
+```
+
+CD (`.github/workflows/deploy.yml`) chains after a green CI run on `master`:
+it builds and pushes the image, applies Alembic migrations, and deploys —
+**staging automatically, production on an environment-gated manual promotion**.
+The host rollout is a single platform-agnostic seam
+([`scripts/deploy_release.sh`](scripts/deploy_release.sh)) you wire to your
+platform, gated so the pipeline is a safe no-op until configured. The full
+runbook — environments, secrets, migration rollback path, health probes — is
+in [`docs/deployment.md`](docs/deployment.md).
+
 ## Project layout
 
 ```
@@ -149,8 +171,14 @@ src/pulsegraph/
 
 dashboard/            React + Vite + TypeScript frontend (end-user + admin UI)
 migrations/           Alembic migrations
-scripts/              Offline eval CLI, golden-dataset growth, e2e smoke, GDPR cascade check
-docs/                 ADRs, architecture, and data model
+scripts/              Offline eval CLI, golden-dataset growth, e2e smoke, GDPR cascade check, deploy seam
+docs/                 ADRs, architecture, data model, deployment runbook
+
+Dockerfile            Multi-stage build; one image, three roles (api/worker/migrate)
+docker/entrypoint.sh  Role dispatch for the image
+docker-compose.yml    Local dev infra (Postgres + Redis)
+docker-compose.prod.yml  Production-like full stack (all roles + datastores)
+.github/workflows/    CI (lint/test/eval/build/e2e) and CD (build/migrate/deploy)
 ```
 
 Python tests are colocated next to the code they cover as `<module>_test.py`.
