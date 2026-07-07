@@ -11,6 +11,16 @@ def make_redis(url: str) -> redis_lib.Redis:
     return redis_lib.Redis.from_url(url, decode_responses=True)
 
 
+def _now() -> datetime.datetime:
+    """Current UTC time as a seam so window logic is testable.
+
+    Isolated behind a function so a test can freeze it: a fixed-window
+    counter otherwise depends on wall-clock time, which makes a burst that
+    straddles a window boundary reset mid-way (a real but rare flake).
+    """
+    return datetime.datetime.now(datetime.UTC)
+
+
 def check_rate(r: redis_lib.Redis, user_id: uuid.UUID, limit: int) -> bool:
     """Return True if the user is within quota, False otherwise.
 
@@ -38,8 +48,7 @@ def check_fixed_window(
     its own. Used to brute-force-protect the auth endpoints keyed on the
     caller's IP (ADR 0021); ``check_rate`` is the per-user hourly variant.
     """
-    now = datetime.datetime.now(datetime.UTC)
-    window = int(now.timestamp()) // window_seconds
+    window = int(_now().timestamp()) // window_seconds
     full_key = f"{key}:{window}"
     count = r.incr(full_key)
     if count == 1:

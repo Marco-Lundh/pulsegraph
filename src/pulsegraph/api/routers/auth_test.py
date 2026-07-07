@@ -6,12 +6,17 @@ import uuid
 import fakeredis
 from fastapi.testclient import TestClient
 
+from pulsegraph import redis_client
 from pulsegraph.api._fake import FakeSession, make_client
 from pulsegraph.api.app import create_app
 from pulsegraph.api.auth import decode_token, hash_password
 from pulsegraph.api.deps import get_db, get_redis
 from pulsegraph.db.models import AuditLogEntry, User
 from pulsegraph.domain.enums import UserRole
+
+# A fixed instant so a rate-limit burst never straddles a fixed-window
+# boundary (which would reset the counter mid-burst — a real, rare flake).
+_FROZEN = datetime.datetime(2026, 7, 7, 12, 0, tzinfo=datetime.UTC)
 
 
 def _client(db: FakeSession) -> TestClient:
@@ -137,8 +142,10 @@ def test_login_matches_correct_user_among_several() -> None:
 # --- rate limiting (ADR 0021) ---
 
 
-def test_login_rate_limited_after_burst() -> None:
+def test_login_rate_limited_after_burst(monkeypatch) -> None:
     # Default limit is 10 attempts per window per IP; the 11th is refused.
+    # Freeze the clock so all 11 attempts fall in the same fixed window.
+    monkeypatch.setattr(redis_client, "_now", lambda: _FROZEN)
     user = _existing_user()
     client = _client(FakeSession(user))
 
@@ -153,7 +160,9 @@ def test_login_rate_limited_after_burst() -> None:
     assert last.status_code == 429
 
 
-def test_register_rate_limited_after_burst() -> None:
+def test_register_rate_limited_after_burst(monkeypatch) -> None:
+    # Freeze the clock so all 11 attempts fall in the same fixed window.
+    monkeypatch.setattr(redis_client, "_now", lambda: _FROZEN)
     client = _client(FakeSession())
 
     last = None

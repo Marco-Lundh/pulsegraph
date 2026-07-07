@@ -7,7 +7,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from pulsegraph.api.costs import cost_summary
-from pulsegraph.api.deps import get_db, require_admin
+from pulsegraph.api.deps import get_checkpointer, get_db, require_admin
+from pulsegraph.api.erasure import purge_user_checkpoints
 from pulsegraph.api.eval_health import eval_health_summary
 from pulsegraph.api.health import operational_summary
 from pulsegraph.api.schemas import (
@@ -326,10 +327,13 @@ def delete_user(
     user_id: uuid.UUID,
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin),
+    checkpointer: object = Depends(get_checkpointer),
 ) -> None:
     """Erase a user and all their data (GDPR right to erasure, ADR 0018).
 
-    All user-owned rows cascade via ON DELETE CASCADE. The audit entry
+    All user-owned rows cascade via ON DELETE CASCADE; the user's graph
+    checkpoints are not FK-linked, so they are purged explicitly first,
+    while the runs are still queryable (ADR 0001/0018). The audit entry
     records the admin actor plus the erased user's id and email.
     """
     target = db.get(User, user_id)
@@ -344,5 +348,6 @@ def delete_user(
             meta={"email": target.email, "by": "admin"},
         )
     )
+    purge_user_checkpoints(db, user_id, checkpointer)
     db.delete(target)
     db.commit()
