@@ -1,10 +1,12 @@
 """Tests for redis_client helpers (ADR 0022)."""
 
+import datetime
 import uuid
 
 import fakeredis
 import pytest
 
+from pulsegraph import redis_client
 from pulsegraph.redis_client import (
     check_fixed_window,
     check_rate,
@@ -17,6 +19,7 @@ from pulsegraph.redis_client import (
 )
 
 _USER = uuid.uuid4()
+_FROZEN = datetime.datetime(2026, 7, 7, 12, 0, tzinfo=datetime.UTC)
 
 
 @pytest.fixture()
@@ -52,7 +55,9 @@ def test_check_rate_independent_users(r) -> None:
     assert check_rate(r, other, limit=3) is True
 
 
-def test_check_fixed_window_blocks_past_limit(r) -> None:
+def test_check_fixed_window_blocks_past_limit(r, monkeypatch) -> None:
+    # Freeze the clock so the burst can't straddle a window boundary.
+    monkeypatch.setattr(redis_client, "_now", lambda: _FROZEN)
     key = "authrate:login:1.2.3.4"
     allowed = [
         check_fixed_window(r, key, limit=3, window_seconds=300)
@@ -61,11 +66,26 @@ def test_check_fixed_window_blocks_past_limit(r) -> None:
     assert allowed == [True, True, True, False]
 
 
-def test_check_fixed_window_independent_keys(r) -> None:
+def test_check_fixed_window_independent_keys(r, monkeypatch) -> None:
+    monkeypatch.setattr(redis_client, "_now", lambda: _FROZEN)
     for _ in range(3):
         check_fixed_window(r, "authrate:login:1.1.1.1", 3, 300)
     # A different IP has its own budget.
     assert check_fixed_window(r, "authrate:login:2.2.2.2", 3, 300) is True
+
+
+def test_check_fixed_window_resets_on_new_window(r, monkeypatch) -> None:
+    # The counter is per window: once the clock advances past the window
+    # boundary the budget is fresh again (the very behavior that, when it
+    # happened mid-burst against the real clock, made the burst tests flaky).
+    key = "authrate:login:9.9.9.9"
+    monkeypatch.setattr(redis_client, "_now", lambda: _FROZEN)
+    first = [check_fixed_window(r, key, 3, 300) for _ in range(4)]
+    assert first == [True, True, True, False]
+
+    later = _FROZEN + datetime.timedelta(seconds=300)
+    monkeypatch.setattr(redis_client, "_now", lambda: later)
+    assert check_fixed_window(r, key, 3, 300) is True
 
 
 # ---------------------------------------------------------------------------
