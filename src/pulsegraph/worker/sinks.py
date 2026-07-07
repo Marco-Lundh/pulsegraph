@@ -74,6 +74,41 @@ def _destination_resolver(
     return resolve
 
 
+def _build_email_sink(
+    settings: Settings, db: Session, frequency: NotificationFrequency
+) -> EmailSink | None:
+    """The email sink if the channel is enabled globally, else None."""
+    if not settings.email_enabled:
+        return None
+    return EmailSink(
+        sender=settings.email_from,
+        transport=SmtpTransport(
+            settings.smtp_host,
+            settings.smtp_port,
+            username=settings.smtp_username,
+            password=settings.smtp_password,
+            use_tls=settings.smtp_use_tls,
+        ),
+        resolve=_destination_resolver(
+            db, NotificationChannel.EMAIL, frequency
+        ),
+    )
+
+
+def _build_webhook_sink(
+    settings: Settings, db: Session, frequency: NotificationFrequency
+) -> WebhookSink | None:
+    """The webhook sink if the channel is enabled globally, else None."""
+    if not settings.webhook_enabled:
+        return None
+    return WebhookSink(
+        resolve=_destination_resolver(
+            db, NotificationChannel.WEBHOOK, frequency
+        ),
+        secret=settings.webhook_signing_secret,
+    )
+
+
 def build_notification_sink(
     settings: Settings,
     db: Session,
@@ -87,30 +122,28 @@ def build_notification_sink(
     ``MultiSink`` (not the ``NotificationSink`` protocol) so callers can
     rely on ``send()``'s per-user success/failure return value (ADR 0016).
     """
-    sinks: list[NotificationSink] = []
-    if settings.email_enabled:
-        sinks.append(
-            EmailSink(
-                sender=settings.email_from,
-                transport=SmtpTransport(
-                    settings.smtp_host,
-                    settings.smtp_port,
-                    username=settings.smtp_username,
-                    password=settings.smtp_password,
-                    use_tls=settings.smtp_use_tls,
-                ),
-                resolve=_destination_resolver(
-                    db, NotificationChannel.EMAIL, frequency
-                ),
-            )
-        )
-    if settings.webhook_enabled:
-        sinks.append(
-            WebhookSink(
-                resolve=_destination_resolver(
-                    db, NotificationChannel.WEBHOOK, frequency
-                ),
-                secret=settings.webhook_signing_secret,
-            )
-        )
+    candidates = (
+        _build_email_sink(settings, db, frequency),
+        _build_webhook_sink(settings, db, frequency),
+    )
+    sinks: list[NotificationSink] = [s for s in candidates if s is not None]
     return MultiSink(sinks)
+
+
+def build_channel_sink(
+    settings: Settings,
+    db: Session,
+    channel: NotificationChannel,
+    frequency: NotificationFrequency = NotificationFrequency.INSTANT,
+) -> EmailSink | WebhookSink | None:
+    """The single sink for one channel, or None when it is off globally.
+
+    Used by the instant-retry job (:mod:`pulsegraph.worker.retry`) to
+    resend a failed notification on exactly the channel it failed on,
+    without fanning out to the others (ADR 0016).
+    """
+    if channel is NotificationChannel.EMAIL:
+        return _build_email_sink(settings, db, frequency)
+    if channel is NotificationChannel.WEBHOOK:
+        return _build_webhook_sink(settings, db, frequency)
+    return None

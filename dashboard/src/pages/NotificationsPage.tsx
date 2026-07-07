@@ -51,7 +51,7 @@ export function NotificationsPage() {
           <table className="w-full text-sm">
             <thead>
               <tr style={{ borderBottom: '1px solid var(--color-border)' }}>
-                {['Channel', 'Status', 'Delivered', 'Key'].map((h) => (
+                {['Status', 'Delivery', 'Delivered', 'Key'].map((h) => (
                   <th
                     key={h}
                     className="px-4 py-3 text-left text-xs font-medium"
@@ -69,11 +69,43 @@ export function NotificationsPage() {
                   style={{ borderBottom: '1px solid var(--color-border)' }}
                   className="last:border-0"
                 >
-                  <td className="px-4 py-3 capitalize" style={{ color: 'var(--color-text-secondary)' }}>
-                    {n.channel}
-                  </td>
                   <td className="px-4 py-3">
                     <StatusBadge status={n.status} />
+                  </td>
+                  <td className="px-4 py-3">
+                    {n.deliveries.length === 0 ? (
+                      <span
+                        className="text-xs"
+                        style={{ color: 'var(--color-text-muted)' }}
+                      >
+                        Dashboard only
+                      </span>
+                    ) : (
+                      <div className="flex flex-col gap-1.5">
+                        {n.deliveries.map((d) => (
+                          <div
+                            key={d.channel}
+                            className="flex items-center gap-2"
+                          >
+                            <span
+                              className="w-16 text-xs capitalize"
+                              style={{ color: 'var(--color-text-secondary)' }}
+                            >
+                              {d.channel}
+                            </span>
+                            <StatusBadge status={d.status} />
+                            {d.status === 'pending' && d.attempts > 0 && (
+                              <span
+                                className="text-xs"
+                                style={{ color: 'var(--color-text-muted)' }}
+                              >
+                                retry {d.attempts}
+                              </span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </td>
                   <td className="px-4 py-3" style={{ color: 'var(--color-text-secondary)' }}>
                     {n.delivered_at

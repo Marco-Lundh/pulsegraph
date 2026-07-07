@@ -2,12 +2,14 @@
 
 import datetime
 import uuid
+from collections import defaultdict
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from pulsegraph.api.deps import get_current_user, get_db
 from pulsegraph.api.schemas import (
+    DeliveryOut,
     NotificationOut,
     NotificationSettingOut,
     NotificationSettingUpdate,
@@ -22,13 +24,39 @@ router = APIRouter(prefix="/notifications", tags=["notifications"])
 def list_notifications(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
-) -> list[Notification]:
-    return (
-        db.query(Notification)
+) -> list[NotificationOut]:
+    """The in-app feed: one row per item (the dashboard channel).
+
+    Each item is delivered on several channels (dashboard, email, webhook),
+    each its own ``Notification`` row (ADR 0016). The feed shows only the
+    dashboard row so an item appears once, enriched with the per-channel
+    delivery status of its email/webhook sibling rows. FakeSession.filter()
+    is a no-op in tests, so re-filter ownership in Python too.
+    """
+    rows = [
+        n
+        for n in db.query(Notification)
         .filter(Notification.user_id == user.id)
         .order_by(Notification.delivered_at.desc())
         .all()
-    )
+        if n.user_id == user.id
+    ]
+    siblings: dict[str, list[Notification]] = defaultdict(list)
+    for row in rows:
+        if row.channel is not NotificationChannel.DASHBOARD:
+            siblings[row.dedup_key].append(row)
+
+    feed: list[NotificationOut] = []
+    for row in rows:
+        if row.channel is not NotificationChannel.DASHBOARD:
+            continue
+        out = NotificationOut.model_validate(row)
+        out.deliveries = [
+            DeliveryOut.model_validate(s)
+            for s in siblings.get(row.dedup_key, [])
+        ]
+        feed.append(out)
+    return feed
 
 
 @router.patch("/{notification_id}/read", response_model=NotificationOut)

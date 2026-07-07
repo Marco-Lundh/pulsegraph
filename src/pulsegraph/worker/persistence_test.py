@@ -31,6 +31,7 @@ from pulsegraph.pipeline.contracts import (
     AnalysisResult,
     EvaluationRecord,
 )
+from pulsegraph.pipeline.delivery import ChannelDelivery, ChannelOutcome
 from pulsegraph.sources.base import FetchedItem
 from pulsegraph.worker.persistence import (
     _validated_embedding,
@@ -311,6 +312,82 @@ def test_digest_mode_writes_pending_notification() -> None:
     notif = db.query(Notification).all()[0]
     assert notif.status == NotificationStatus.PENDING
     assert notif.delivered_at is None
+
+
+def test_writes_per_channel_rows_from_delivery_log() -> None:
+    # The Notifier's instant sink reported per-channel outcomes for this
+    # item; persistence writes a tracked row per real attempt (ADR 0016):
+    # a SENT email and a FAILED (-> PENDING, to be retried) webhook.
+    watch = _watch()
+    run = _run(watch)
+    db = FakeSession(watch, run)
+    ev = _evaluation(EvalStatus.APPROVED)
+    deliveries = {
+        "jobtech:42": [
+            ChannelDelivery(NotificationChannel.EMAIL, ChannelOutcome.SENT),
+            ChannelDelivery(
+                NotificationChannel.WEBHOOK, ChannelOutcome.FAILED
+            ),
+        ]
+    }
+
+    persist_run_results(
+        db,
+        run,
+        watch,
+        _state([ev]),
+        embedding_model="hashing-768-v1",
+        model_versions=_MODEL_VERSIONS,
+        now=_NOW,
+        deliveries=deliveries,
+    )
+
+    by_channel = {n.channel: n for n in db.query(Notification).all()}
+    assert set(by_channel) == {
+        NotificationChannel.DASHBOARD,
+        NotificationChannel.EMAIL,
+        NotificationChannel.WEBHOOK,
+    }
+    assert by_channel[NotificationChannel.DASHBOARD].status is (
+        NotificationStatus.SENT
+    )
+    email = by_channel[NotificationChannel.EMAIL]
+    assert email.status is NotificationStatus.SENT
+    assert email.delivered_at == _NOW
+    webhook = by_channel[NotificationChannel.WEBHOOK]
+    assert webhook.status is NotificationStatus.PENDING
+    assert webhook.delivered_at is None
+    assert webhook.attempts == 0
+    # All rows share the item's dedup identity, differing only by channel.
+    assert {n.dedup_key for n in by_channel.values()} == {"jobtech:42"}
+
+
+def test_skipped_channel_writes_no_row() -> None:
+    # A channel the user has not enabled recorded SKIPPED: no row is written
+    # (only the unconditional dashboard row remains).
+    watch = _watch()
+    run = _run(watch)
+    db = FakeSession(watch, run)
+    ev = _evaluation(EvalStatus.APPROVED)
+    deliveries = {
+        "jobtech:42": [
+            ChannelDelivery(NotificationChannel.EMAIL, ChannelOutcome.SKIPPED),
+        ]
+    }
+
+    persist_run_results(
+        db,
+        run,
+        watch,
+        _state([ev]),
+        embedding_model="hashing-768-v1",
+        model_versions=_MODEL_VERSIONS,
+        now=_NOW,
+        deliveries=deliveries,
+    )
+
+    channels = {n.channel for n in db.query(Notification).all()}
+    assert channels == {NotificationChannel.DASHBOARD}
 
 
 def test_persists_provenance_but_no_notification_for_review() -> None:

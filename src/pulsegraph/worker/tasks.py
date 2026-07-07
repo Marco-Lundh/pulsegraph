@@ -128,6 +128,10 @@ def run_watch_core(
                 },
                 digest=user_wants_digest(db, watch.user_id),
                 similarity_threshold=settings.embedding_similarity_threshold,
+                # The instant sink recorded per-channel delivery outcomes as
+                # the Notifier ran; persist a row per channel so each send is
+                # tracked and a failure can be retried (ADR 0016).
+                deliveries=getattr(run_deps.sink, "deliveries", None),
             )
             run.status = RunStatus.SUCCEEDED
     except Exception as exc:

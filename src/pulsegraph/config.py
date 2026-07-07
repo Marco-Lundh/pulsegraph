@@ -191,6 +191,11 @@ class Settings(BaseSettings):
     # attempts it is dead-lettered (marked FAILED) instead of retrying
     # forever against a permanently broken destination.
     digest_max_attempts: int = Field(default=5, alias="DIGEST_MAX_ATTEMPTS")
+    # Instant delivery retry cap (ADR 0016): a failed instant email/webhook
+    # send leaves a PENDING per-channel row that a scheduled job retries;
+    # after this many total failed attempts it is dead-lettered (marked
+    # FAILED) instead of retrying forever against a broken destination.
+    instant_max_attempts: int = Field(default=5, alias="INSTANT_MAX_ATTEMPTS")
 
     @property
     def cloud_model_available(self) -> bool:

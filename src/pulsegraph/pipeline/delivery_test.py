@@ -7,8 +7,10 @@ from email.message import EmailMessage
 
 import pytest
 
+from pulsegraph.domain.enums import NotificationChannel
 from pulsegraph.pipeline.contracts import NotificationDraft
 from pulsegraph.pipeline.delivery import (
+    ChannelOutcome,
     EmailSink,
     MultiSink,
     WebhookSink,
@@ -236,3 +238,106 @@ def test_multi_sink_send_detailed_true_with_no_channels() -> None:
     result = MultiSink([]).send_detailed(_draft())
     assert result.all_ok is True
     assert result.any_ok is True
+
+
+# --- deliver() tri-state ---------------------------------------------------
+
+
+class _FailingTransport:
+    def send(self, message: EmailMessage) -> None:
+        raise RuntimeError("smtp down")
+
+
+def test_email_deliver_reports_sent() -> None:
+    sink = EmailSink(
+        sender="alerts@pulsegraph.io",
+        transport=_RecordingTransport(),
+        resolve=lambda user_id: "user@example.com",
+    )
+    assert sink.deliver(_draft()) is ChannelOutcome.SENT
+
+
+def test_email_deliver_reports_skipped_without_recipient() -> None:
+    sink = EmailSink(
+        sender="alerts@pulsegraph.io",
+        transport=_RecordingTransport(),
+        resolve=lambda user_id: None,
+    )
+    assert sink.deliver(_draft()) is ChannelOutcome.SKIPPED
+
+
+def test_email_deliver_reports_failed_and_does_not_raise() -> None:
+    sink = EmailSink(
+        sender="alerts@pulsegraph.io",
+        transport=_FailingTransport(),
+        resolve=lambda user_id: "user@example.com",
+    )
+    # deliver() swallows the error and reports it, unlike send().
+    assert sink.deliver(_draft()) is ChannelOutcome.FAILED
+
+
+def test_webhook_deliver_reports_states() -> None:
+    ok = WebhookSink(
+        resolve=lambda u: "https://hook.example/x", post=_RecordingPoster()
+    )
+    skipped = WebhookSink(resolve=lambda u: None, post=_RecordingPoster())
+    failed = WebhookSink(
+        resolve=lambda u: "https://hook.example/x",
+        post=_RecordingPoster(status_code=500),
+    )
+    assert ok.deliver(_draft()) is ChannelOutcome.SENT
+    assert skipped.deliver(_draft()) is ChannelOutcome.SKIPPED
+    assert failed.deliver(_draft()) is ChannelOutcome.FAILED
+
+
+def test_email_and_webhook_expose_their_channel() -> None:
+    assert EmailSink.channel is NotificationChannel.EMAIL
+    assert WebhookSink.channel is NotificationChannel.WEBHOOK
+
+
+# --- MultiSink per-run delivery log ----------------------------------------
+
+
+def test_multi_sink_logs_per_channel_outcomes() -> None:
+    # A real channel sink reports a tri-state outcome that MultiSink records
+    # in its per-run log, keyed by draft dedup_key, for persistence to turn
+    # into per-channel Notification rows (ADR 0016).
+    email = EmailSink(
+        sender="alerts@pulsegraph.io",
+        transport=_RecordingTransport(),
+        resolve=lambda u: "user@example.com",
+    )
+    webhook = WebhookSink(  # user has not enabled webhook -> SKIPPED
+        resolve=lambda u: None,
+        post=_RecordingPoster(),
+    )
+    sink = MultiSink([email, webhook])
+
+    sink.send(_draft())
+
+    logged = sink.deliveries["jobtech:42"]
+    outcomes = {d.channel: d.outcome for d in logged}
+    assert outcomes[NotificationChannel.EMAIL] is ChannelOutcome.SENT
+    assert outcomes[NotificationChannel.WEBHOOK] is ChannelOutcome.SKIPPED
+
+
+def test_multi_sink_logs_failed_channel_without_failing_run() -> None:
+    webhook = WebhookSink(
+        resolve=lambda u: "https://hook.example/x",
+        post=_RecordingPoster(status_code=500),
+    )
+    sink = MultiSink([webhook])
+
+    # A failing channel is recorded but never raises (the run must not fail).
+    assert sink.send(_draft()) is False
+    logged = sink.deliveries["jobtech:42"]
+    assert logged[0].channel is NotificationChannel.WEBHOOK
+    assert logged[0].outcome is ChannelOutcome.FAILED
+
+
+def test_multi_sink_leaves_log_empty_for_send_only_sinks() -> None:
+    # Sinks without deliver() (offline InMemorySink, test doubles) record no
+    # channel, so persistence writes only the dashboard row for them.
+    sink = MultiSink([_CollectingSink()])
+    sink.send(_draft())
+    assert sink.deliveries == {}

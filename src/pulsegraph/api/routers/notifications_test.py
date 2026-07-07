@@ -1,10 +1,96 @@
 """Tests for /notifications, including per-channel settings (ADR 0016)."""
 
+import datetime
 import uuid
 
 from pulsegraph.api._fake import FakeSession, make_client
-from pulsegraph.db.models import NotificationSetting
-from pulsegraph.domain.enums import NotificationChannel, NotificationFrequency
+from pulsegraph.db.models import Notification, NotificationSetting
+from pulsegraph.domain.enums import (
+    NotificationChannel,
+    NotificationFrequency,
+    NotificationStatus,
+)
+
+_NOW = datetime.datetime(2026, 7, 7, 9, 0, tzinfo=datetime.UTC)
+
+
+def _notif(
+    user_id: uuid.UUID,
+    channel: NotificationChannel,
+    *,
+    key: str = "jobtech:1",
+    status: NotificationStatus = NotificationStatus.SENT,
+    attempts: int = 0,
+    delivered: bool = True,
+) -> Notification:
+    return Notification(
+        id=uuid.uuid4(),
+        user_id=user_id,
+        analysis_id=uuid.uuid4(),
+        channel=channel,
+        dedup_key=key,
+        status=status,
+        delivered_at=_NOW if delivered else None,
+        attempts=attempts,
+    )
+
+
+# --- feed: list ---
+
+
+def test_feed_shows_one_row_per_item_with_deliveries() -> None:
+    client, user, _ = make_client()
+    db = FakeSession(
+        user,
+        _notif(user.id, NotificationChannel.DASHBOARD),
+        _notif(user.id, NotificationChannel.EMAIL),
+        _notif(
+            user.id,
+            NotificationChannel.WEBHOOK,
+            status=NotificationStatus.PENDING,
+            attempts=2,
+            delivered=False,
+        ),
+    )
+    client2, _, _ = make_client(db=db, user=user)
+
+    body = client2.get("/notifications").json()
+
+    # One feed row for the item (the dashboard channel), not three.
+    assert len(body) == 1
+    row = body[0]
+    assert row["channel"] == "dashboard"
+    deliveries = {d["channel"]: d for d in row["deliveries"]}
+    assert deliveries["email"]["status"] == "sent"
+    assert deliveries["webhook"]["status"] == "pending"
+    assert deliveries["webhook"]["attempts"] == 2
+
+
+def test_feed_item_without_side_channels_has_empty_deliveries() -> None:
+    client, user, _ = make_client()
+    db = FakeSession(user, _notif(user.id, NotificationChannel.DASHBOARD))
+    client2, _, _ = make_client(db=db, user=user)
+
+    body = client2.get("/notifications").json()
+
+    assert len(body) == 1
+    assert body[0]["deliveries"] == []
+
+
+def test_feed_excludes_other_users() -> None:
+    client, user, _ = make_client()
+    db = FakeSession(
+        user,
+        _notif(user.id, NotificationChannel.DASHBOARD, key="jobtech:1"),
+        _notif(uuid.uuid4(), NotificationChannel.DASHBOARD, key="jobtech:9"),
+    )
+    client2, _, _ = make_client(db=db, user=user)
+
+    body = client2.get("/notifications").json()
+
+    assert len(body) == 1
+    assert body[0]["dedup_key"] == "jobtech:1"
+
 
 # --- settings: list ---
 
