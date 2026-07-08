@@ -1,0 +1,9 @@
+# Normalize line endings so the repo builds the same on every platform.
+#
+# Shell scripts and the container build files MUST stay LF: a CRLF shebang
+# (`#!/bin/sh\r`) makes the Linux kernel look for an interpreter named
+# "/bin/sh\r" and the container fails to start with
+# "exec .../entrypoint.sh: no such file or directory". This bites Windows
+# checkouts with core.autocrlf=true, so pin it here regardless of that.
+*.sh        text eol=lf
+Dockerfile  text eol=lf

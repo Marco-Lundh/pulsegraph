@@ -1,0 +1,19 @@
+# Offline-lab override for docker-compose.prod.yml (ADR 0017 experimentation).
+#
+# Points every role at an image PULLED from the local registry
+# (localhost:5000) instead of building from source, so you exercise the real
+# "pull the built image from a registry and roll onto it" deploy path fully
+# offline — no GHCR, no cloud. Driven by scripts/lab_deploy.sh; you normally
+# do not invoke this file directly. Layered on top of the production compose:
+#
+#   docker-compose -f docker-compose.prod.yml -f docker-compose.lab.yml ...
+#
+# Everything else (env, ports, healthchecks, dependency ordering) is inherited
+# unchanged from docker-compose.prod.yml — only the image source differs.
+services:
+  migrate:
+    image: "localhost:5000/pulsegraph:${LAB_TAG:?set LAB_TAG via scripts/lab_deploy.sh}"
+  api:
+    image: "localhost:5000/pulsegraph:${LAB_TAG:?set LAB_TAG via scripts/lab_deploy.sh}"
+  worker:
+    image: "localhost:5000/pulsegraph:${LAB_TAG:?set LAB_TAG via scripts/lab_deploy.sh}"

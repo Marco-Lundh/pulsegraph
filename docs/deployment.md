@@ -160,6 +160,47 @@ docker-compose --env-file .env.prod -f docker-compose.prod.yml up --build
 exited 0 and the datastores are healthy. The API is published on
 `API_PORT` (default 8000).
 
+## Offline lab (local registry)
+
+`scripts/lab_deploy.sh` exercises the whole release loop — build → push to a
+registry → migrate → roll `api`+`worker` onto the image → rollback —
+**entirely offline**, using a local Docker registry as a stand-in for GHCR. No
+cloud, and no secrets beyond a JWT key it generates for you (`.env.lab`,
+gitignored).
+
+One-time: a local registry on `:5000`:
+
+```
+docker run -d -p 5000:5000 --restart always --name registry registry:2
+```
+
+Then run a release and seed demo data:
+
+```
+scripts/lab_deploy.sh build lab1     # build the image, push to localhost:5000
+scripts/lab_deploy.sh deploy lab1    # pull it, migrate, start api + worker (:8100)
+scripts/lab_deploy.sh seed           # demo + admin users, watches, a week of runs
+scripts/lab_deploy.sh status         # tags, running stack, registry catalog, health
+```
+
+Seed logins: `demo@pulsegraph.dev` / `demo1234` (user) and
+`admin@pulsegraph.dev` / `admin1234` (admin). The API is at
+`http://localhost:8100` — point the dashboard's dev-proxy there, or call it
+directly.
+
+Roll forward and back (the Postgres volume persists, so seeded data survives):
+
+```
+scripts/lab_deploy.sh build lab2 && scripts/lab_deploy.sh deploy lab2  # roll forward
+scripts/lab_deploy.sh rollback        # redeploy the previous tag
+scripts/lab_deploy.sh downgrade -1    # roll the SCHEMA back one revision
+scripts/lab_deploy.sh down --wipe     # stop everything and drop the volume
+```
+
+The lab reuses `docker-compose.prod.yml` unchanged and layers
+`docker-compose.lab.yml` on top to source images from the registry instead of
+building — the exact production stack, just fed from a local registry.
+
 ## Health probes
 
 - **Liveness:** `GET /health` → `200 {"status":"ok"}` (never touches
