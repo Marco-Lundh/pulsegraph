@@ -153,6 +153,14 @@ platform, gated so the pipeline is a safe no-op until configured. The full
 runbook — environments, secrets, migration rollback path, health probes — is
 in [`docs/deployment.md`](docs/deployment.md).
 
+For a full dry run with no cloud and no secrets, the **offline deploy lab**
+([`scripts/lab_deploy.sh`](scripts/lab_deploy.sh)) exercises the whole release
+loop — build → push to a local registry → migrate → roll api + worker → rollback
+→ schema downgrade — against a Docker registry on `:5000` standing in for GHCR.
+It layers [`docker-compose.lab.yml`](docker-compose.lab.yml) on top of the prod
+stack; see the "Offline lab" section of
+[`docs/deployment.md`](docs/deployment.md).
+
 ## Project layout
 
 ```
@@ -171,13 +179,14 @@ src/pulsegraph/
 
 dashboard/            React + Vite + TypeScript frontend (end-user + admin UI)
 migrations/           Alembic migrations
-scripts/              Offline eval CLI, golden-dataset growth, e2e smoke, GDPR cascade check, deploy seam
+scripts/              Offline eval CLI, golden-dataset growth, e2e smoke, GDPR cascade check, deploy seam, offline deploy lab
 docs/                 ADRs, architecture, data model, deployment runbook
 
 Dockerfile            Multi-stage build; one image, three roles (api/worker/migrate)
 docker/entrypoint.sh  Role dispatch for the image
 docker-compose.yml    Local dev infra (Postgres + Redis)
 docker-compose.prod.yml  Production-like full stack (all roles + datastores)
+docker-compose.lab.yml   Offline deploy lab: source images from a local registry
 .github/workflows/    CI (lint/test/eval/build/e2e) and CD (build/migrate/deploy)
 ```
 
