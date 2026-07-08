@@ -6,6 +6,9 @@
 !.env.example
 !.env.prod.example
 
+# Offline deploy lab state (scripts/lab_deploy.sh)
+.lab-state
+
 # Python
 __pycache__/
 *.py[cod]
