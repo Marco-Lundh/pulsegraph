@@ -9,6 +9,10 @@
 # Offline deploy lab state (scripts/lab_deploy.sh)
 .lab-state
 
+# Playwright MCP artifacts (screenshots, snapshots)
+.playwright-mcp/
+lab-dashboard-demo.png
+
 # Python
 __pycache__/
 *.py[cod]

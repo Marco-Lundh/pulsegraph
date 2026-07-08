@@ -185,8 +185,12 @@ scripts/lab_deploy.sh status         # tags, running stack, registry catalog, he
 
 Seed logins: `demo@pulsegraph.dev` / `demo1234` (user) and
 `admin@pulsegraph.dev` / `admin1234` (admin). The API is at
-`http://localhost:8100` — point the dashboard's dev-proxy there, or call it
-directly.
+`http://localhost:8100`. To drive the lab from the dashboard, point its
+dev-proxy at that port (defaults to `:8000`):
+
+```
+PULSEGRAPH_API_PROXY=http://localhost:8100 npm --prefix dashboard run dev
+```
 
 Roll forward and back (the Postgres volume persists, so seeded data survives):
 
